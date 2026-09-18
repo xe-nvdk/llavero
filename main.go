@@ -546,8 +546,8 @@ func runList(opts options) error {
 		if account == "" {
 			account = c.UserDisplay
 		}
-		fmt.Printf("%-28s  %-34s  %-16x  %5d  %s\n",
-			truncate(c.RPID, 28), truncate(account, 34), c.ID[:8], c.SignCount,
+		fmt.Printf("%-28s  %-34s  %-16s  %5d  %s\n",
+			truncate(c.RPID, 28), truncate(account, 34), credIDPrefix(c.ID), c.SignCount,
 			c.CreatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	fmt.Printf("\n%d passkey(s).\n", len(creds))

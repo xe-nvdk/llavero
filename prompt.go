@@ -72,12 +72,15 @@ func (m *menuApprover) confirm(title string, choices []string) (string, error) {
 		}
 		return "", err
 	}
-	// Options may carry a tab-separated subtext; the label is the first field.
-	choice := strings.TrimSpace(string(out))
-	if i := strings.IndexByte(choice, '\t'); i >= 0 {
-		choice = choice[:i]
-	}
-	return choice, nil
+	return menuSelection(out), nil
+}
+
+// menuSelection keeps the picker result intact, including a trailing subtext.
+// omarchy-menu-select returns "label\tsubtext" for three-field rows so callers
+// can tell same-named entries apart. Stripping the subtext here would throw
+// that key away and collapse two "alice" rows into the first one.
+func menuSelection(out []byte) string {
+	return strings.TrimSpace(string(out))
 }
 
 // autoApprover approves everything. Intended for headless testing only; main
