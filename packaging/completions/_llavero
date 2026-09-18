@@ -1,0 +1,32 @@
+#compdef llavero
+
+# zsh completion for llavero
+# Install as /usr/share/zsh/site-functions/_llavero
+
+_llavero() {
+	local -a modes uv consent
+	modes=(passphrase tpm tpm+passphrase)
+	uv=(fingerprint prompt)
+	consent=(prompt fingerprint)
+
+	_arguments -s -S \
+		'-vault[path to the encrypted vault file]:vault file:_files' \
+		'-unlock[unlock mode for a new vault]:mode:($modes)' \
+		'-rekey[re-encrypt an existing vault, then exit]:mode:($modes)' \
+		'-uv[user verification method]:method:($uv)' \
+		'-uv-strict[deny when the fingerprint sensor is unusable]' \
+		'-consent[how to take consent]:method:($consent)' \
+		'-uv-grace[reuse a fingerprint scan for the same site]:duration:(0 5s 10s)' \
+		'-mlock[lock memory against swap (default true)]' \
+		'-mlock=false[do not lock memory]' \
+		'-list[list stored passkeys, then exit]' \
+		'-forget[delete passkeys by site or credential id prefix]:site or prefix:' \
+		'-auto-approve[approve every request without prompting (testing only)]' \
+		'-passphrase-fd[read the vault passphrase from this file descriptor]:fd:(0)' \
+		'-new-passphrase-fd[read the new passphrase for -rekey from this fd]:fd:(0)' \
+		'-tpm-selftest[seal and unseal a test secret, then exit]' \
+		'-v[log every CTAPHID frame]' \
+		'-h[print flag defaults and exit]'
+}
+
+_llavero "$@"

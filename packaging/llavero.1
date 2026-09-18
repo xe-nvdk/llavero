@@ -1,0 +1,276 @@
+.TH LLAVERO 1 "September 2026" "llavero" "User Commands"
+.SH NAME
+llavero \- software FIDO2 authenticator for Linux
+.SH SYNOPSIS
+.B llavero
+[\fIOPTION\fR]...
+.SH DESCRIPTION
+.B llavero
+is a software FIDO2 authenticator.
+It registers a virtual FIDO HID device with the kernel so browsers discover
+it the same way they discover a hardware security key: no extension, no
+native messaging host, no browser configuration.
+.PP
+Passkeys live in a single AES-256-GCM encrypted vault, optionally sealed to
+this machine's TPM.
+Every registration and every sign-in requires user verification
+(a fingerprint by default) and an explicit desktop approval that names the
+site.
+.PP
+With no action flags,
+.B llavero
+unlocks the vault and runs as the authenticator daemon.
+.B \-list ,
+.B \-forget ,
+.B \-rekey
+and
+.B \-tpm-selftest
+run their action and exit.
+.SH OPTIONS
+.TP
+.BI \-vault " PATH"
+Path to the encrypted vault file.
+Default:
+.IR $XDG_DATA_HOME/llavero/vault.pkv ,
+or
+.I ~/.local/share/llavero/vault.pkv
+if
+.B XDG_DATA_HOME
+is unset.
+A TPM-bound vault also keeps a sealed blob at
+.IR PATH.tpm .
+.TP
+.BI \-unlock " MODE"
+Unlock mode used only when creating a
+.B new
+vault:
+.BR passphrase ,
+.BR tpm ,
+or
+.BR tpm+passphrase .
+The mode is recorded in the vault header, so later starts ask only for what
+that vault actually needs.
+Default:
+.BR passphrase .
+.TP
+.BI \-rekey " MODE"
+Re-encrypt an existing vault under
+.I MODE
+and exit.
+The original file is copied to a timestamped
+.B .bak-*
+backup first, and success is reported only after the rewritten vault reopens
+with the same credential count.
+.TP
+.BI \-uv " METHOD"
+User verification:
+.B fingerprint
+(the default) or
+.BR prompt
+(the desktop approval alone).
+.TP
+.B \-uv-strict
+Deny the request when the fingerprint sensor is unusable, instead of falling
+back to the desktop approval.
+The packaged user unit sets this.
+It is an example of failing closed on a vault that unlocks itself at login,
+not a setting tuned to one machine.
+.TP
+.BI \-consent " METHOD"
+How to take consent:
+.B prompt
+(click to approve, then touch; the default) or
+.B fingerprint
+(touch only).
+.B \-consent fingerprint
+falls back to the approval prompt if no sensor is available, so a page
+cannot mint passkeys in silence.
+.TP
+.BI \-uv-grace " DURATION"
+Reuse a just-completed fingerprint scan for repeat requests from the
+.B same
+site.
+Clients often fire two
+.B getAssertion
+calls milliseconds apart for one sign-in.
+Default: 5s.
+.B 0
+disables reuse.
+.TP
+.BI \-mlock
+Lock process memory so decrypted keys cannot be written to swap.
+Default: on.
+Pass
+.B \-mlock=false
+to turn it off.
+.I mlockall
+needs the
+.B RLIMIT_MEMLOCK
+ceiling raised on the
+.B systemd --user
+manager; see
+.I packaging/README.md
+and the
+.B user@.service.d
+drop-in.
+.TP
+.B \-list
+Print stored passkeys and exit.
+.TP
+.BI \-forget " SITE|PREFIX"
+Delete passkeys matching a relying-party ID or a credential-id prefix, then
+exit.
+Shows what it will delete and asks you to type the same string back.
+Refuses to run while
+.B llavero.service
+has that same vault open, because the daemon holds its own copy in memory
+and its next write would resurrect anything deleted underneath it.
+.TP
+.BI \-passphrase-fd " N"
+Read the vault passphrase from file descriptor
+.IR N
+.RB ( 0
+for stdin).
+.TP
+.BI \-new-passphrase-fd " N"
+Read the new passphrase for
+.B \-rekey
+from file descriptor
+.IR N .
+.TP
+.B \-tpm-selftest
+Seal and unseal a test secret, confirm two seals differ, confirm a
+corrupted blob is rejected, then exit.
+.TP
+.B \-auto-approve
+Approve every request without prompting.
+Testing only.
+.TP
+.B \-v
+Log every CTAPHID frame.
+.TP
+.B \-h
+Print flag defaults and exit.
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/llavero/vault.pkv
+Default vault.
+The matching TPM blob, if any, is
+.IR vault.pkv.tpm .
+.TP
+.I /dev/uhid
+Kernel device used to register the virtual HID authenticator.
+The packaged udev rule grants the active seat access; without it the daemon
+exits with
+.BR "no access to /dev/uhid" .
+.TP
+.I /dev/tpmrm0
+TPM 2.0 resource manager, required for
+.B tpm
+and
+.B tpm+passphrase
+unlock.
+The packaged
+.B tpmrm
+udev rule is preferred over joining the
+.B tss
+group: supplementary groups are fixed when a process starts, and the
+.B systemd --user
+manager commonly survives logout.
+.TP
+.I ~/.local/bin/llavero
+Where a from-source install should place the binary.
+The user unit's
+.B ExecStart
+is
+.IR %h/.local/bin/llavero .
+.B go install
+writes to
+.B GOBIN
+(or
+.IR $(go env GOPATH)/bin );
+set
+.B GOBIN=~/.local/bin
+so the unit finds it.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, including a completed daemon shutdown after SIGINT or SIGTERM.
+.TP
+.B 1
+The requested action failed (permissions, a locked vault, a refused
+.BR \-forget ,
+and so on).
+.SH ENVIRONMENT
+.TP
+.B XDG_DATA_HOME
+Directory under which the default vault is stored
+.RI ( .../llavero/vault.pkv ).
+.TP
+.B WAYLAND_DISPLAY , DISPLAY
+At least one must be set for the desktop approval prompt.
+Without a display every request would be refused with no visible reason.
+.SH EXAMPLES
+Create a TPM-unlocked vault and start the user service:
+.PP
+.nf
+.RS
+llavero \-unlock tpm
+systemctl \-\-user enable \-\-now llavero.service
+.RE
+.fi
+.PP
+List stored passkeys:
+.PP
+.nf
+.RS
+llavero \-list
+.RE
+.fi
+.PP
+Delete every passkey for a site (stop the service first):
+.PP
+.nf
+.RS
+systemctl \-\-user stop llavero.service
+llavero \-forget dash.example.com
+.RE
+.fi
+.PP
+Rekey a
+.B copy
+of a TPM-bound vault to a portable passphrase backup.
+Both the vault and its
+.B .tpm
+blob must be copied; the live vault is left untouched:
+.PP
+.nf
+.RS
+cp ~/.local/share/llavero/vault.pkv     /tmp/portable.pkv
+cp ~/.local/share/llavero/vault.pkv.tpm /tmp/portable.pkv.tpm
+llavero \-vault /tmp/portable.pkv \-rekey passphrase
+.RE
+.fi
+.SH SEE ALSO
+.BR systemd (1),
+.BR udev (7),
+.BR fprintd (1)
+.PP
+The repository README covers the security model, browser behaviour, and
+setup in more detail.
+Packaging files (udev rules, the user unit, this page, and shell
+completions) live in
+.IR packaging/ .
+.SH NOTES
+.B llavero
+does not implement CTAP 2.1 credential management or PIN protocols.
+.B CTAPHID_CANCEL
+is not honoured while an approval dialog is on screen; a cancelled
+WebAuthn request times out rather than aborting immediately.
+.PP
+Chrome on Linux may register a passkey into its own profile store instead
+of this vault.
+Prefer Firefox for registrations you intend to keep, and look for a
+.B registered passkey for
+line in the journal.
+}
