@@ -48,6 +48,13 @@ const (
 	keepaliveInterval = 100 * time.Millisecond
 )
 
+// hidSink is the device-to-host half of the HID transport. uhidDevice writes
+// 64-byte reports to /dev/uhid; tests record them in memory so framing can be
+// checked without a kernel device.
+type hidSink interface {
+	sendInput(report []byte) error
+}
+
 // assembly tracks a partially received message on one channel.
 type assembly struct {
 	cmd     byte
@@ -57,14 +64,14 @@ type assembly struct {
 }
 
 type ctapHID struct {
-	dev     *uhidDevice
+	dev     hidSink
 	pending map[uint32]*assembly
 	nextCID uint32
 	onCBOR  func(payload []byte) []byte
 	logf    func(format string, args ...any)
 }
 
-func newCtapHID(dev *uhidDevice, onCBOR func([]byte) []byte, logf func(string, ...any)) *ctapHID {
+func newCtapHID(dev hidSink, onCBOR func([]byte) []byte, logf func(string, ...any)) *ctapHID {
 	return &ctapHID{
 		dev:     dev,
 		pending: make(map[uint32]*assembly),
