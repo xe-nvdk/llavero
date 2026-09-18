@@ -1,6 +1,6 @@
 [Unit]
 Description=Llavero (virtual FIDO2 authenticator)
-Documentation=file:%h/Work/llavero/README.md
+Documentation=man:llavero(1)
 # Bound to the graphical session because approval prompts need Wayland.
 # uwsm exports WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE into the user
 # manager, so omarchy-menu-select and notify-send work from here.

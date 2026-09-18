@@ -58,10 +58,27 @@ reboot fixes it. The udev rule takes effect immediately because ACLs are
 evaluated by UID at `open()` time, and it is narrower than the group: it is
 scoped to the active seat session rather than every process you run.
 
+Then install the binary where the user unit looks for it
+(`~/.local/bin/llavero`):
+
+```sh
+# from a clone
+go build -o llavero . && install -m755 llavero ~/.local/bin/
+
+# or, without cloning
+GOBIN=~/.local/bin go install github.com/xe-nvdk/llavero@latest
+```
+
+`go install` writes to `GOBIN`, or to `$(go env GOPATH)/bin` if that is
+unset. The user unit's `ExecStart` is `%h/.local/bin/llavero`, so set
+`GOBIN` rather than copying afterwards. Neither command installs the udev
+rules, the systemd unit, the man page, or the shell completions. Those
+live in [`packaging/`](packaging/); copy them as that README describes, or
+keep using the udev snippets above.
+
 Then:
 
 ```sh
-go build -o llavero . && install -m755 llavero ~/.local/bin/
 llavero -unlock tpm          # creates the vault, no passphrase needed
 systemctl --user enable --now llavero.service
 ```
@@ -141,6 +158,9 @@ llavero -vault /tmp/portable.pkv -list
 | `-tpm-selftest` | seal and unseal a test secret, then exit |
 | `-auto-approve` | approve everything without prompting. Testing only |
 | `-v` | log every CTAPHID frame |
+
+`llavero -h` prints the same list with defaults. The man page (`llavero(1)`)
+is the full reference.
 
 ## Security model
 
@@ -231,11 +251,11 @@ so in the warning it logs.
 With the flag, a sensor that cannot be reached denies the request. Without it,
 the daemon falls back to the desktop approval you just gave and logs loudly.
 
-The installed service sets it. This laptop's fingerprint reader is known to
-wedge after suspend when USB re-enumerates, so if that ever locks you out, drop
-the flag from the unit or run the daemon by hand with `-uv prompt` until the
-sensor is fixed. Failing closed is the right default for a vault that unlocks
-itself at login.
+The installed service sets it. That is an example of failing closed, not a
+setting tuned to one machine. Some readers wedge after suspend when USB
+re-enumerates; if that locks you out, drop the flag from the unit or run the
+daemon by hand with `-uv prompt` until the sensor is usable again. Failing
+closed is the right default for a vault that unlocks itself at login.
 
 ## Testing
 
