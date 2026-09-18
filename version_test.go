@@ -78,10 +78,10 @@ func TestApplyBuildInfoDoesNotOverrideLdflags(t *testing.T) {
 
 func TestApplyBuildInfoReadsGoInstallPseudoVersion(t *testing.T) {
 	info := &debug.BuildInfo{
-		Main: debug.Module{Version: "v0.0.0-20260917121223-230caa9abcdef"},
+		Main: debug.Module{Version: "v0.0.0-20260917121223-230caa9abcde"},
 	}
 	version, commit, date := applyBuildInfo("dev", "none", "unknown", info)
-	if version != "v0.0.0-20260917121223-230caa9abcdef" {
+	if version != "v0.0.0-20260917121223-230caa9abcde" {
 		t.Errorf("version = %q, want the module pseudo-version", version)
 	}
 	if commit != "230caa9" {
@@ -99,8 +99,8 @@ func TestParsePseudoVersion(t *testing.T) {
 		wantDate   string
 		ok         bool
 	}{
-		{"v0.0.0-20260917121223-230caa9abcdef", "230caa9", "2026-09-17", true},
-		{"v0.1.1-0.20260917121223-230caa9abcdef", "230caa9", "2026-09-17", true},
+		{"v0.0.0-20260917121223-230caa9abcde", "230caa9", "2026-09-17", true},
+		{"v0.1.1-0.20260917121223-230caa9abcde", "230caa9", "2026-09-17", true},
 		{"v0.1.0", "", "", false},
 		{"dev", "", "", false},
 		{"v0.1.0-rc.1", "", "", false},
