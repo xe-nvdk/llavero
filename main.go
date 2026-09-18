@@ -62,6 +62,7 @@ func main() {
 		opts        options
 		tpmSelftest = flag.Bool("tpm-selftest", false, "seal and unseal a test secret, then exit")
 		verboseFlag = flag.Bool("v", false, "log every CTAPHID frame")
+		versionFlag = flag.Bool("version", false, "print version information and exit")
 	)
 	flag.StringVar(&opts.vaultPath, "vault", defaultVaultPath(), "path to the encrypted vault file")
 	flag.StringVar(&opts.unlock, "unlock", "passphrase", "unlock mode for a NEW vault: passphrase, tpm, or tpm+passphrase")
@@ -78,6 +79,11 @@ func main() {
 	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey from this file descriptor")
 	flag.Parse()
 	verbose = *verboseFlag
+
+	if *versionFlag {
+		fmt.Println(versionString())
+		return
+	}
 
 	if *tpmSelftest {
 		if err := runTPMSelftest(); err != nil {
@@ -203,6 +209,8 @@ func runRekey(opts options) error {
 }
 
 func run(opts options) error {
+	logf("%s", versionString())
+
 	// Before anything touches a key. Core dumps and ptrace are shut off first
 	// so there is no window in which a decrypted vault could escape.
 	hardenProcess(opts.mlock, logf)
