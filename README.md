@@ -131,6 +131,7 @@ llavero -vault /tmp/portable.pkv -list
 
 | Flag | Meaning |
 |---|---|
+| `-version` | print version, commit and build date, then exit |
 | `-vault PATH` | vault file location |
 | `-unlock MODE` | unlock mode for a **new** vault |
 | `-rekey MODE` | re-encrypt an existing vault, then exit |
