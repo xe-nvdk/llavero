@@ -10,7 +10,7 @@ import (
 func TestModulePathAllowsGoInstall(t *testing.T) {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
-		t.fatal(err)
+		t.Fatal(err)
 	}
 	const want = "module github.com/xe-nvdk/llavero\n"
 	if !strings.HasPrefix(string(data), want) {
@@ -21,11 +21,11 @@ func TestModulePathAllowsGoInstall(t *testing.T) {
 func TestPackagingDocsCoverFlags(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
-		t.fatal(err)
+		t.Fatal(err)
 	}
 	flags := flagsDeclaredIn(string(src))
 	if len(flags) == 0 {
-		t.fatal("parsed no flags from main.go")
+		t.Fatal("parsed no flags from main.go")
 	}
 
 	files := []string{

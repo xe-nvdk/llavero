@@ -20,8 +20,8 @@ site.
 With no action flags,
 .B llavero
 unlocks the vault and runs as the authenticator daemon.
-.B \-list ,
-.B \-forget ,
+.BR \-list ,
+.BR \-forget ,
 .B \-rekey
 and
 .B \-tpm-selftest
@@ -31,9 +31,9 @@ run their action and exit.
 .BI \-vault " PATH"
 Path to the encrypted vault file.
 Default:
-.IR $XDG_DATA_HOME/llavero/vault.pkv ,
+.I $XDG_DATA_HOME/llavero/vault.pkv
 or
-.I ~/.local/share/llavero/vault.pkv
+.I \%~/.local/share/llavero/vault.pkv
 if
 .B XDG_DATA_HOME
 is unset.
@@ -188,7 +188,7 @@ is
 writes to
 .B GOBIN
 (or
-.IR $(go env GOPATH)/bin );
+.IR $(go\ env\ GOPATH)/bin );
 set
 .B GOBIN=~/.local/bin
 so the unit finds it.
@@ -207,7 +207,7 @@ and so on).
 Directory under which the default vault is stored
 .RI ( .../llavero/vault.pkv ).
 .TP
-.B WAYLAND_DISPLAY , DISPLAY
+.BR WAYLAND_DISPLAY ", " DISPLAY
 At least one must be set for the desktop approval prompt.
 Without a display every request would be refused with no visible reason.
 .SH EXAMPLES
@@ -273,4 +273,3 @@ of this vault.
 Prefer Firefox for registrations you intend to keep, and look for a
 .B registered passkey for
 line in the journal.
-}
