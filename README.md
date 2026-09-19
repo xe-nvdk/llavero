@@ -93,6 +93,8 @@ llavero -rekey tpm
 llavero -list                    # what is stored
 llavero -forget dash.example.com # delete by site
 llavero -forget 02fe624b         # or by credential id prefix
+llavero export ~/backup.pkv      # passphrase-backed portable copy
+llavero import ~/backup.pkv      # merge a backup into this vault
 ```
 
 `-forget` shows what it will delete and asks you to type the site name back.
@@ -106,25 +108,28 @@ TPM binding means a copy of `vault.pkv` plus `vault.pkv.tpm` only works on the
 machine that sealed it. That is the point, but it also means those files are
 not a recovery plan: lose the board and they decrypt to nothing.
 
-To make a copy that opens anywhere with a passphrase, rekey a duplicate rather
-than the live vault:
+`llavero export` writes a copy that opens anywhere with a passphrase. It
+unlocks the live vault (TPM-bound or not), re-encrypts the credentials under
+the passphrase you choose, reopens the result before reporting success, and
+leaves no `.tpm` blob or `.bak-*` next to the file. The live vault is not
+written, so this works while the service is running.
 
 ```sh
-cp ~/.local/share/llavero/vault.pkv     /tmp/portable.pkv
-cp ~/.local/share/llavero/vault.pkv.tpm /tmp/portable.pkv.tpm
-llavero -vault /tmp/portable.pkv -rekey passphrase
-rm /tmp/portable.pkv.tpm /tmp/portable.pkv.bak-*
+llavero export ~/backup.pkv          # refuses to overwrite without -force
+llavero import ~/backup.pkv          # merge into the current vault
 ```
 
-Both files must be copied: the rekey has to unseal the original secret before
-it can re-encrypt under a passphrase. The result holds every credential and is
-independent of this machine. The live vault is untouched.
+`import` adds credentials that are not already present. On a colliding
+`(rpId, userId)` pair the higher signature counter wins, so a restore does
+not blindly replace a passkey the way re-registration does. Stop the service
+before importing: the daemon holds its own copy in memory and its next write
+would overwrite the merge.
 
-Store it somewhere you would store a recovery code, and redo it after
+Store the backup somewhere you would store a recovery code, and redo it after
 registering a passkey you care about. Verify it with:
 
 ```sh
-llavero -vault /tmp/portable.pkv -list
+llavero -vault ~/backup.pkv -list
 ```
 
 ### Flags
@@ -134,6 +139,7 @@ llavero -vault /tmp/portable.pkv -list
 | `-vault PATH` | vault file location |
 | `-unlock MODE` | unlock mode for a **new** vault |
 | `-rekey MODE` | re-encrypt an existing vault, then exit |
+| `-force` | overwrite the `export` destination if it already exists |
 | `-uv fingerprint\|prompt` | user verification method |
 | `-uv-strict` | deny when the sensor is unusable, instead of falling back |
 | `-passphrase-fd N` | read the passphrase from a descriptor (`0` for stdin) |

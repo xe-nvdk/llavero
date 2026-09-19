@@ -303,6 +303,77 @@ func createVault(path string, mode unlockMode, passphrase []byte) (*vault, error
 	return v, nil
 }
 
+// cloneCredential copies a stored credential so merge/export cannot alias
+// the caller's slices.
+func cloneCredential(c storedCredential) storedCredential {
+	out := c
+	out.ID = append([]byte(nil), c.ID...)
+	out.UserID = append([]byte(nil), c.UserID...)
+	out.PrivateKey = append([]byte(nil), c.PrivateKey...)
+	return out
+}
+
+func cloneContents(in vaultContents) vaultContents {
+	out := vaultContents{Credentials: make([]storedCredential, len(in.Credentials))}
+	for i, c := range in.Credentials {
+		out.Credentials[i] = cloneCredential(c)
+	}
+	return out
+}
+
+func credentialIdentity(c storedCredential) string {
+	return c.RPID + "\x00" + string(c.UserID)
+}
+
+// snapshot copies every credential. Export uses it so the live vault is only
+// read, even while the service holds the same file open.
+func (v *vault) snapshot() vaultContents {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return cloneContents(v.contents)
+}
+
+// exportPortable writes a passphrase-only copy of this vault to dest. It
+// reuses rekey() for the crypto, on a clone so the source path, key, and
+// mode are left alone.
+func (v *vault) exportPortable(dest string, passphrase []byte) error {
+	clone := &vault{path: dest, contents: v.snapshot()}
+	return clone.rekey(modePassphrase, passphrase)
+}
+
+// mergeCredentials adds incoming passkeys. On a colliding (rpId, userId)
+// pair the higher signature counter wins; addCredential would replace
+// blindly, which is right for re-registration and wrong for a restore.
+func (v *vault) mergeCredentials(incoming []storedCredential) (added, replaced, kept int, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	index := make(map[string]int, len(v.contents.Credentials))
+	for i, c := range v.contents.Credentials {
+		index[credentialIdentity(c)] = i
+	}
+	for _, inc := range incoming {
+		inc = cloneCredential(inc)
+		key := credentialIdentity(inc)
+		if i, ok := index[key]; ok {
+			if inc.SignCount > v.contents.Credentials[i].SignCount {
+				v.contents.Credentials[i] = inc
+				replaced++
+			} else {
+				kept++
+			}
+			continue
+		}
+		v.contents.Credentials = append(v.contents.Credentials, inc)
+		index[key] = len(v.contents.Credentials) - 1
+		added++
+	}
+	if added == 0 && replaced == 0 {
+		return added, replaced, kept, nil
+	}
+	return added, replaced, kept, v.save()
+}
+
 // rekey rewrites an already-open vault under a new mode, preserving every
 // credential. The caller is responsible for having backed up the old file.
 func (v *vault) rekey(mode unlockMode, passphrase []byte) error {

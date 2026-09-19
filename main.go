@@ -55,6 +55,7 @@ type options struct {
 	autoApprove bool
 	passFD      int
 	newPassFD   int
+	force       bool
 }
 
 func main() {
@@ -75,7 +76,12 @@ func main() {
 	flag.StringVar(&opts.forget, "forget", "", "delete passkeys matching a site or a credential id prefix, then exit")
 	flag.BoolVar(&opts.autoApprove, "auto-approve", false, "approve every request without prompting (testing only)")
 	flag.IntVar(&opts.passFD, "passphrase-fd", -1, "read the vault passphrase from this file descriptor")
-	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey from this file descriptor")
+	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey or export, or the backup passphrase for import")
+	flag.BoolVar(&opts.force, "force", false, "overwrite the export destination if it already exists")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [export|import FILE]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	verbose = *verboseFlag
 
@@ -122,7 +128,7 @@ func loadVault(opts options) (*vault, error) {
 
 	var passphrase []byte
 	if mode.needsPassphrase() {
-		p, err := readPassphrase(opts.passFD, isNew, "")
+		p, err := readPassphrase(opts.passFD, isNew, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +183,7 @@ func runRekey(opts options) error {
 
 	var newPass []byte
 	if newMode.needsPassphrase() {
-		p, err := readPassphrase(opts.newPassFD, true, "new ")
+		p, err := readPassphrase(opts.newPassFD, true, "new ", "")
 		if err != nil {
 			return err
 		}
@@ -215,6 +221,16 @@ func run(opts options) error {
 	}
 	if opts.forget != "" {
 		return runForget(opts)
+	}
+
+	switch flag.Arg(0) {
+	case "export":
+		return runExport(opts, flag.Arg(1))
+	case "import":
+		return runImport(opts, flag.Arg(1))
+	case "":
+	default:
+		return fmt.Errorf("unknown command %q (want export or import)", flag.Arg(0))
 	}
 
 	// Check device access before asking for a passphrase, so a permissions
@@ -362,7 +378,7 @@ func checkUHIDAccess() error {
 	return fmt.Errorf("opening /dev/uhid: %w", err)
 }
 
-func readPassphrase(passFD int, confirm bool, adjective string) ([]byte, error) {
+func readPassphrase(passFD int, confirm bool, adjective, prompt string) ([]byte, error) {
 	if passFD >= 0 {
 		f := os.NewFile(uintptr(passFD), "passphrase")
 		if f == nil {
@@ -412,7 +428,10 @@ func readPassphrase(passFD int, confirm bool, adjective string) ([]byte, error) 
 		return first, nil
 	}
 
-	fmt.Print("Vault passphrase: ")
+	if prompt == "" {
+		prompt = "Vault passphrase: "
+	}
+	fmt.Print(prompt)
 	pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	return pass, err
