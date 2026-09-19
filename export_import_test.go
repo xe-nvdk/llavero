@@ -58,14 +58,14 @@ func exportOpts(t *testing.T, vaultPath string, vaultPass, backupPass string, fo
 	srcFD, srcClose := pipePassphrase(t, vaultPass)
 	newFD, newClose := pipePassphrase(t, backupPass)
 	return options{
-			vaultPath: vaultPath,
-			passFD:    srcFD,
-			newPassFD: newFD,
-			force:     force,
-		}, func() {
-			srcClose()
-			newClose()
-		}
+		vaultPath: vaultPath,
+		passFD:    srcFD,
+		newPassFD: newFD,
+		force:     force,
+	}, func() {
+		srcClose()
+		newClose()
+	}
 }
 
 func TestExportRefusesOverwriteWithoutForce(t *testing.T) {
