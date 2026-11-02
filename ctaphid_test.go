@@ -90,10 +90,26 @@ type hidReply struct {
 	payload []byte
 }
 
+// withoutKeepalives drops KEEPALIVE frames. runWithKeepalive may emit one
+// before the reply when the CBOR handler is slow to return (a loaded or -race
+// CI runner), and the tests only care about the reply itself.
+func withoutKeepalives(frames [][]byte) [][]byte {
+	var out [][]byte
+	for _, f := range frames {
+		if len(f) > 4 && f[4] == cmdKeepalive|0x80 {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 // collectReply reassembles a device-to-host message and checks that
 // continuation packets are numbered 0, 1, 2... on the same channel.
+// KEEPALIVE frames ahead of the reply are ignored.
 func collectReply(t *testing.T, frames [][]byte) hidReply {
 	t.Helper()
+	frames = withoutKeepalives(frames)
 	if len(frames) == 0 {
 		t.Fatal("no packets were written back")
 	}
@@ -391,7 +407,7 @@ func TestCTAPHIDOutboundFragmentation(t *testing.T) {
 	})
 	feed(h, hostFrames(testCID, cmdCBOR, []byte{0x04})...)
 
-	frames := rec.take()
+	frames := withoutKeepalives(rec.take())
 	if len(frames) != 3 {
 		t.Fatalf("wrote %d packets, want 3 (init + two continuations)", len(frames))
 	}
