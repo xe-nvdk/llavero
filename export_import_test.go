@@ -739,3 +739,48 @@ func TestExportRejectsShortPassphraseFromFD(t *testing.T) {
 		}
 	}
 }
+
+// After an import adds a second key for an account already present, the
+// picker must show two distinct rows, offer the local key first, and sign
+// with whichever key the chosen row names.
+func TestPickerAfterImportSignsWithChosenKey(t *testing.T) {
+	local := testStoredCred("example.test", "alice", 4, "cred-alice-local")
+	local.CreatedAt = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	restored := testStoredCred("example.test", "alice", 40, "cred-alice-backup")
+	restored.CreatedAt = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	v := testVaultWith(t, local)
+	if res, err := v.mergeCredentials([]storedCredential{restored}, nil); err != nil || res.Added != 1 {
+		t.Fatalf("merge = %+v, %v; want 1 added", res, err)
+	}
+
+	for _, tc := range []struct {
+		row  int
+		want storedCredential
+	}{{0, local}, {1, restored}} {
+		offered := v.findForRP("example.test", nil)
+		if len(offered) != 2 || !bytes.Equal(offered[0].ID, local.ID) {
+			t.Fatalf("findForRP order after import: want the local key first")
+		}
+		pick := newAccountPicker(offered)
+		ap := &scriptedApprover{reply: pick.items[tc.row].key}
+		a := &authenticator{vault: v, approver: ap, logf: func(string, ...any) {}}
+
+		clientDataHash := bytes.Repeat([]byte{1}, 32)
+		resp := decodeAssertion(t, a.getAssertion(encodeGetAssertion(t, "example.test")))
+		if len(ap.choices) != 2 || ap.choices[0] == ap.choices[1] {
+			t.Fatalf("picker rows = %#v, want two distinct rows", ap.choices)
+		}
+		if !bytes.Equal(resp.Credential.ID, tc.want.ID) {
+			t.Fatalf("row %d signed with %x, want %x", tc.row, resp.Credential.ID[:4], tc.want.ID[:4])
+		}
+		priv, err := parsePrivateKey(tc.want.PrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(append(append([]byte(nil), resp.AuthData...), clientDataHash...))
+		if !ecdsa.VerifyASN1(&priv.PublicKey, digest[:], resp.Signature) {
+			t.Fatalf("row %d: signature does not verify under the chosen key", tc.row)
+		}
+	}
+}
