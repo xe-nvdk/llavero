@@ -50,7 +50,7 @@ func lockVault(vaultPath string) (*vaultLock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|unix.O_CLOEXEC, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("opening vault lock %s: %w", path, err)
 	}
@@ -90,6 +90,10 @@ func vaultInUse(vaultPath string) bool {
 
 // lockForWrite is lockVault with an error message that tells the user what
 // to do. what names the command, e.g. "import".
+//
+// The systemd check stays as a second guard after the lock is taken: a
+// daemon from a build before the vault lock holds no lock at all, so until
+// it is restarted on a new binary only the old check can see it.
 func lockForWrite(vaultPath, what string) (*vaultLock, error) {
 	l, err := lockVault(vaultPath)
 	if errors.Is(err, errVaultLocked) {
@@ -101,5 +105,15 @@ func lockForWrite(vaultPath, what string) (*vaultLock, error) {
 			"       in memory, so its next write would overwrite this one. Stop it first,\n"+
 			"       e.g.  systemctl --user stop llavero.service", what, hint, vaultPath)
 	}
-	return l, err
+	if err != nil {
+		return nil, err
+	}
+	if serviceHasOpen(vaultPath) {
+		l.unlock()
+		return nil, fmt.Errorf("refusing to %s: llavero.service is running on %s without\n"+
+			"       holding the vault lock (an older build?), and its next write would\n"+
+			"       overwrite this one. Stop it first:  systemctl --user stop llavero.service",
+			what, vaultPath)
+	}
+	return l, nil
 }

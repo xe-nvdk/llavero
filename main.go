@@ -693,7 +693,9 @@ func runForget(opts options) error {
 //
 // It is only used to word an error: the vault lock (lockVault) is what keeps
 // offline writers and the daemon apart.
-func serviceHasOpen(vaultPath string) bool {
+var serviceHasOpen = systemdServiceHasOpen
+
+func systemdServiceHasOpen(vaultPath string) bool {
 	out, err := exec.Command("systemctl", "--user", "is-active", "llavero.service").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "active" {
 		return false

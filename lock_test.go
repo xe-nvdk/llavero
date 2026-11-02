@@ -140,3 +140,37 @@ func TestExportRefusesLockedDestinationEvenWithForce(t *testing.T) {
 		t.Fatal("export -force replaced a vault a running llavero holds")
 	}
 }
+
+// A daemon from before the vault lock holds none, so the systemd check must
+// still stop writers while one runs.
+func TestWritersRefuseUnlockedOldService(t *testing.T) {
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "vault.pkv")
+	backup := filepath.Join(dir, "backup.pkv")
+	seedPassphraseVault(t, vaultPath, []byte("vault-passphrase"), testStoredCred("example.test", "alice", 1, "cred-alice"))
+	seedPassphraseVault(t, backup, []byte("backup-passphrase"), testStoredCred("example.test", "bob", 1, "cred-bob"))
+	before, err := os.ReadFile(vaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := serviceHasOpen
+	serviceHasOpen = func(p string) bool { return sameFile(p, vaultPath) }
+	t.Cleanup(func() { serviceHasOpen = orig })
+
+	opts, closeFDs := importOpts(t, vaultPath, "vault-passphrase", "backup-passphrase")
+	defer closeFDs()
+	if err := runImport(opts, backup); err == nil || !strings.Contains(err.Error(), "without\n       holding the vault lock") {
+		t.Fatalf("import while an old service runs: err = %v", err)
+	}
+	if vaultInUse(vaultPath) {
+		t.Fatal("the refused writer left the vault locked")
+	}
+	after, err := os.ReadFile(vaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("import changed the vault while an old service was running on it")
+	}
+}
