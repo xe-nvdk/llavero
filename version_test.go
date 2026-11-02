@@ -16,6 +16,9 @@ func TestFormatVersion(t *testing.T) {
 	if got != want {
 		t.Fatalf("formatVersion = %q, want %q", got, want)
 	}
+	if got := formatVersion("0.1.0", "230caa9", "2026-09-17"); got != want {
+		t.Fatalf("missing v prefix: got %q, want %q", got, want)
+	}
 	if got := formatVersion("", "", ""); got != "llavero dev (none, unknown)" {
 		t.Fatalf("empty fields = %q, want the documented defaults", got)
 	}

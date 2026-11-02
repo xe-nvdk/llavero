@@ -183,6 +183,17 @@ llavero -vault /tmp/portable.pkv -list
 `llavero -h` prints the same list with defaults. The man page (`llavero(1)`)
 is the full reference.
 
+`-version` prints `llavero <version> (<commit>, <commit date>)`. A plain
+`go build` or `go install` fills these from the metadata Go embeds. Release
+builds stamp them explicitly, with the tag's `v` prefix (a bare `0.1.0` is
+printed as `v0.1.0` anyway):
+
+```sh
+go build -ldflags "-X main.version=v0.1.0 \
+  -X main.commit=$(git rev-parse --short HEAD) \
+  -X main.commitDate=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%d --format=%cd)" -o llavero .
+```
+
 ## Security model
 
 Two independent layers, each covering what the other cannot:

@@ -10,7 +10,7 @@ package main
 //
 //	-X main.version=v0.1.0
 //	-X main.commit=$(git rev-parse --short HEAD)
-//	-X main.commitDate=$(git log -1 --format=%cs)
+//	-X main.commitDate=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%d --format=%cd)
 //
 // A plain `go build` or `go install` leaves the defaults. applyBuildInfo then
 // fills what it can from the metadata Go embeds, so both paths give a bug
@@ -168,6 +168,11 @@ func versionLine() string {
 func formatVersion(version, commit, commitDate string) string {
 	if version == "" {
 		version = "dev"
+	}
+	// Tags and Go module versions carry a v prefix; accept a release
+	// stamped as -X main.version=0.1.0 and print it the same way.
+	if c := version[0]; c >= '0' && c <= '9' {
+		version = "v" + version
 	}
 	if commit == "" {
 		commit = "none"
