@@ -1,4 +1,4 @@
-module llavero
+module github.com/xe-nvdk/llavero
 
 go 1.27
 

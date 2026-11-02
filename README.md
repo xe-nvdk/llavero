@@ -58,10 +58,37 @@ reboot fixes it. The udev rule takes effect immediately because ACLs are
 evaluated by UID at `open()` time, and it is narrower than the group: it is
 scoped to the active seat session rather than every process you run.
 
+If you joined the group anyway and still get `no access to /dev/tpmrm0`, check
+when the user manager started:
+
+```sh
+ps -o lstart= -p "$(pgrep -u "$USER" -x systemd)"
+```
+
+A start time from before your `usermod` means it is still running with the old
+groups, and so is every service it launched.
+
+Then install the binary where the user unit looks for it
+(`~/.local/bin/llavero`):
+
+```sh
+# from a clone
+go build -o llavero . && install -m755 llavero ~/.local/bin/
+
+# or, without cloning
+GOBIN=~/.local/bin go install github.com/xe-nvdk/llavero@latest
+```
+
+`go install` writes to `GOBIN`, or to `$(go env GOPATH)/bin` if that is
+unset. The user unit's `ExecStart` is `%h/.local/bin/llavero`, so set
+`GOBIN` rather than copying afterwards. Neither command installs the udev
+rules, the systemd unit, the man page, or the shell completions. Those
+live in [`packaging/`](packaging/); copy them as that README describes, or
+keep using the udev snippets above.
+
 Then:
 
 ```sh
-go build -o llavero . && install -m755 llavero ~/.local/bin/
 llavero -unlock tpm          # creates the vault, no passphrase needed
 systemctl --user enable --now llavero.service
 ```
@@ -69,6 +96,16 @@ systemctl --user enable --now llavero.service
 No udev rule is needed for the HID node itself. Arch already ships
 `60-fido-id.rules`, which recognises the FIDO usage page in our report
 descriptor, tags the node `uaccess`, and grants the logged-in user an ACL.
+If a browser never offers the key, check that udev tagged the node as a
+security token. The daemon logs the node at startup as
+`presenting as /dev/hidrawN`:
+
+```sh
+udevadm info -q property -n /dev/hidrawN | grep ID_SECURITY_TOKEN
+```
+
+No `ID_SECURITY_TOKEN=1` means `60-fido-id.rules` did not match, so the node
+gets no `uaccess` ACL and the browser cannot open it.
 
 ### Unlock modes
 
@@ -131,6 +168,7 @@ llavero -vault /tmp/portable.pkv -list
 
 | Flag | Meaning |
 |---|---|
+| `-version` | print version, commit hash and commit date, then exit |
 | `-vault PATH` | vault file location |
 | `-unlock MODE` | unlock mode for a **new** vault |
 | `-rekey MODE` | re-encrypt an existing vault, then exit |
@@ -141,6 +179,20 @@ llavero -vault /tmp/portable.pkv -list
 | `-tpm-selftest` | seal and unseal a test secret, then exit |
 | `-auto-approve` | approve everything without prompting. Testing only |
 | `-v` | log every CTAPHID frame |
+
+`llavero -h` prints the same list with defaults. The man page (`llavero(1)`)
+is the full reference.
+
+`-version` prints `llavero <version> (<commit>, <commit date>)`. A plain
+`go build` or `go install` fills these from the metadata Go embeds. Release
+builds stamp them explicitly, with the tag's `v` prefix (a bare `0.1.0` is
+printed as `v0.1.0` anyway):
+
+```sh
+go build -ldflags "-X main.version=v0.1.0 \
+  -X main.commit=$(git rev-parse --short HEAD) \
+  -X main.commitDate=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%d --format=%cd)" -o llavero .
+```
 
 ## Security model
 
@@ -231,11 +283,11 @@ so in the warning it logs.
 With the flag, a sensor that cannot be reached denies the request. Without it,
 the daemon falls back to the desktop approval you just gave and logs loudly.
 
-The installed service sets it. This laptop's fingerprint reader is known to
-wedge after suspend when USB re-enumerates, so if that ever locks you out, drop
-the flag from the unit or run the daemon by hand with `-uv prompt` until the
-sensor is fixed. Failing closed is the right default for a vault that unlocks
-itself at login.
+The installed service sets it. That is an example of failing closed, not a
+setting tuned to one machine. Some readers wedge after suspend when USB
+re-enumerates; if that locks you out, drop the flag from the unit or run the
+daemon by hand with `-uv prompt` until the sensor is usable again. Failing
+closed is the right default for a vault that unlocks itself at login.
 
 ## Testing
 
