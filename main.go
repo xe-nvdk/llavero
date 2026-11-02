@@ -161,6 +161,32 @@ func loadVault(opts options) (*vault, error) {
 	return v, nil
 }
 
+// parseCommand reads the positional arguments left after flag parsing: none,
+// or "export FILE" / "import FILE". Go's flag package stops at the first
+// non-flag argument, so anything after FILE would otherwise be ignored
+// without a word, including -vault and -force.
+func parseCommand(args []string) (cmd, file string, err error) {
+	if len(args) == 0 {
+		return "", "", nil
+	}
+	cmd = args[0]
+	if cmd != "export" && cmd != "import" {
+		return "", "", fmt.Errorf("unknown command %q (want export or import)", cmd)
+	}
+	switch {
+	case len(args) < 2 || strings.TrimSpace(args[1]) == "":
+		return "", "", fmt.Errorf("usage: llavero [flags] %s FILE", cmd)
+	case len(args) > 2:
+		extra := args[2]
+		if strings.HasPrefix(extra, "-") {
+			return "", "", fmt.Errorf("%q after the file name is not applied: flags must come before the command\n"+
+				"       e.g.  llavero [flags] %s FILE", extra, cmd)
+		}
+		return "", "", fmt.Errorf("%s takes exactly one FILE, got %q too", cmd, extra)
+	}
+	return cmd, args[1], nil
+}
+
 func runRekey(opts options) error {
 	newMode, err := parseUnlockMode(opts.rekeyTo)
 	if err != nil {
@@ -225,6 +251,16 @@ func run(opts options) error {
 	// so there is no window in which a decrypted vault could escape.
 	hardenProcess(opts.mlock, logf)
 
+	// Parse the subcommand before anything else runs, so a misplaced flag is
+	// an error rather than a silent no-op on the wrong vault.
+	cmd, file, err := parseCommand(flag.Args())
+	if err != nil {
+		return err
+	}
+	if cmd != "" && (opts.rekeyTo != "" || opts.list || opts.forget != "") {
+		return fmt.Errorf("%s cannot be combined with -rekey, -list, or -forget", cmd)
+	}
+
 	if opts.rekeyTo != "" {
 		return runRekey(opts)
 	}
@@ -235,14 +271,11 @@ func run(opts options) error {
 		return runForget(opts)
 	}
 
-	switch flag.Arg(0) {
+	switch cmd {
 	case "export":
-		return runExport(opts, flag.Arg(1))
+		return runExport(opts, file)
 	case "import":
-		return runImport(opts, flag.Arg(1))
-	case "":
-	default:
-		return fmt.Errorf("unknown command %q (want export or import)", flag.Arg(0))
+		return runImport(opts, file)
 	}
 
 	// Check device access before asking for a passphrase, so a permissions
