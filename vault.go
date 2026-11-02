@@ -587,17 +587,19 @@ func (v *vault) addCredential(rp rpEntity, user userEntity) (*storedCredential, 
 	// One passkey per (rpId, userId). Re-registering the same account replaces
 	// the old key rather than accumulating credentials the RP will never ask
 	// for again. Import is the exception: it may hold a second key for an
-	// account (see mergeCredentials), and only the first match is replaced.
-	replaced := false
+	// account (see mergeCredentials). Then the newest one, the last in the
+	// slice, is replaced, so the key just minted is the one findForRP offers
+	// first.
+	last := -1
 	for i := range v.contents.Credentials {
 		c := &v.contents.Credentials[i]
 		if c.RPID == rp.ID && string(c.UserID) == string(user.ID) {
-			v.contents.Credentials[i] = cred
-			replaced = true
-			break
+			last = i
 		}
 	}
-	if !replaced {
+	if last >= 0 {
+		v.contents.Credentials[last] = cred
+	} else {
 		v.contents.Credentials = append(v.contents.Credentials, cred)
 	}
 

@@ -544,3 +544,26 @@ func TestImportSkipsInvalidRecords(t *testing.T) {
 		}
 	}
 }
+
+// After an import leaves two keys for one account, re-registering that
+// account must replace the older key and make the new one the first offered.
+func TestReRegisterAfterImportPrefersNewKey(t *testing.T) {
+	dir := t.TempDir()
+	local := testStoredCred("example.test", "alice", 0, "local-alice")
+	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"), local)
+	if _, err := current.mergeCredentials([]storedCredential{testStoredCred("example.test", "alice", 9, "old-alice")}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh, _, err := current.addCredential(rpEntity{ID: "example.test"}, userEntity{ID: []byte("alice"), Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := current.findForRP("example.test", nil)
+	if len(m) != 2 {
+		t.Fatalf("findForRP = %d creds, want 2", len(m))
+	}
+	if !bytes.Equal(m[0].ID, fresh.ID) {
+		t.Fatal("the just-registered key is not the one a discoverable sign-in picks")
+	}
+}
