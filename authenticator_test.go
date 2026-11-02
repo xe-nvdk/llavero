@@ -113,8 +113,8 @@ func TestAccountPickerRowsAreUniqueForDuplicateNames(t *testing.T) {
 	if !strings.Contains(p.items[1].label, credIDPrefix(b.ID)) {
 		t.Errorf("label %q should include the second credential-id prefix", p.items[1].label)
 	}
-	if p.items[0].row != "\t"+p.items[0].key {
-		t.Errorf("row = %q, want the omarchy glyph\\tlabel\\tsubtext form", p.items[0].row)
+	if want := "\t" + p.items[0].label + "\t" + p.items[0].subtext; p.items[0].row != want {
+		t.Errorf("row = %q, want the omarchy glyph\\tlabel\\tsubtext form %q", p.items[0].row, want)
 	}
 	if p.items[0].id != credIDPrefix(a.ID) || p.items[1].id != credIDPrefix(b.ID) {
 		t.Errorf("ids = %q, %q", p.items[0].id, p.items[1].id)
@@ -249,7 +249,8 @@ func TestSanitizePickerFieldDropsControlAndFormatRunes(t *testing.T) {
 	}
 }
 
-// A NUL in a site-supplied name must not reach exec.
+// A NUL in a site-supplied name must not reach exec, and names that differ
+// only by invisible characters must still be treated as a collision.
 func TestAccountPickerSanitizesHostileNames(t *testing.T) {
 	p := newAccountPicker([]storedCredential{
 		{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: "ali\x00ce"},
@@ -259,6 +260,9 @@ func TestAccountPickerSanitizesHostileNames(t *testing.T) {
 		if strings.ContainsAny(it.row, "\x00\u200B\u202E\n") {
 			t.Fatalf("row %q still carries control or format runes", it.row)
 		}
+	}
+	if p.items[0].label == p.items[1].label {
+		t.Fatalf("lookalike names kept the same visible label %q", p.items[0].label)
 	}
 }
 
@@ -375,5 +379,61 @@ func TestAccountPickerTruncatesLongNamesKeepingPrefix(t *testing.T) {
 		if n := utf8.RuneCountInString(label); n > maxPickerNameRunes+3+16 {
 			t.Errorf("label has %d runes, want at most %d", n, maxPickerNameRunes+3+16)
 		}
+	}
+}
+
+// When the id prefix is folded into a colliding label, the subtext carries
+// only the creation date (local time, like -list); otherwise it carries both.
+func TestAccountPickerSubtextDoesNotRepeatID(t *testing.T) {
+	created := time.Date(2026, 3, 4, 23, 30, 0, 0, time.UTC)
+	date := created.Local().Format("2006-01-02")
+	p := newAccountPicker([]storedCredential{
+		{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: "alice", CreatedAt: created},
+		{ID: []byte("bbbbbbbbbbbbbbbb"), UserName: "alice", CreatedAt: created},
+		{ID: []byte("cccccccccccccccc"), UserName: "bob", CreatedAt: created},
+	})
+	for i := 0; i < 2; i++ {
+		it := p.items[i]
+		if it.subtext != date {
+			t.Errorf("colliding row subtext = %q, want just the date %q", it.subtext, date)
+		}
+		if it.label != "alice · "+it.id {
+			t.Errorf("colliding row label = %q, want alice · %s", it.label, it.id)
+		}
+		if got := p.match(it.label + "\t" + it.subtext); got != i {
+			t.Errorf("key for row %d matched %d", i, got)
+		}
+	}
+	bob := p.items[2]
+	if bob.label != "bob" || bob.subtext != bob.id+" · "+date {
+		t.Errorf("unique row = %q / %q, want bob / %s · %s", bob.label, bob.subtext, bob.id, date)
+	}
+}
+
+// Names that differ only past the truncation point look the same in the
+// picker, so they must be disambiguated like any other collision.
+func TestAccountPickerCountsCollisionsAfterTruncation(t *testing.T) {
+	base := strings.Repeat("x", maxPickerNameRunes+5)
+	p := newAccountPicker([]storedCredential{
+		{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: base + "1"},
+		{ID: []byte("bbbbbbbbbbbbbbbb"), UserName: base + "2"},
+	})
+	if p.items[0].label == p.items[1].label {
+		t.Fatalf("truncated lookalike names share the label %q", p.items[0].label)
+	}
+}
+
+// Without a creation date a colliding row has an empty subtext; the trimmed
+// reply must still resolve to it.
+func TestAccountPickerMatchesCollidingRowWithoutDate(t *testing.T) {
+	p := newAccountPicker([]storedCredential{
+		{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: "alice"},
+		{ID: []byte("bbbbbbbbbbbbbbbb"), UserName: "alice"},
+	})
+	if got := p.match(menuSelection([]byte(p.items[1].label + "\t\n"))); got != 1 {
+		t.Fatalf("label with empty subtext matched %d, want 1", got)
+	}
+	if got := p.match(p.items[1].row); got != 1 {
+		t.Fatalf("row matched %d, want 1", got)
 	}
 }

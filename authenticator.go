@@ -288,8 +288,9 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 	// silently choosing for them. Rows carry a credential-id subtext (and a
 	// disambiguated label when names collide) so two "alice" accounts, or two
 	// nameless ones that both fall back to "this account", stay distinct.
-	// The choice is resolved by index or credential id, never by the first
-	// display-name match.
+	// The reply is matched against each row's label\tsubtext key, then a
+	// credential-id prefix, then a label only one row carries; anything
+	// ambiguous is denied rather than resolved to the first match.
 	chosen := matches[0]
 	if len(matches) > 1 {
 		picker := newAccountPicker(matches)
@@ -501,7 +502,8 @@ func sanitizePickerField(s string) string {
 //
 // row is the omarchy-menu-select three-field form (empty glyph, label,
 // subtext). key is what that picker returns for such a row — label\tsubtext —
-// which is unique because the subtext is the credential-id prefix. name is
+// which is unique because the credential-id prefix is in the subtext or, when
+// names collide, in the label. name is
 // the friendly display name, kept for logs and the UV reason so those still
 // read as "alice" rather than "alice · e2f02eed…".
 type accountPickerItem struct {
@@ -522,47 +524,58 @@ type accountPicker struct {
 }
 
 func newAccountPicker(matches []storedCredential) accountPicker {
+	// Collisions are decided on what the user will actually see, after
+	// cleaning and truncation: names that differ only by invisible runes, or
+	// only past the truncation point, still look identical.
 	names := make([]string, len(matches))
+	labels := make([]string, len(matches))
 	counts := make(map[string]int, len(matches))
 	for i, c := range matches {
 		names[i] = displayName(userEntity{Name: c.UserName, DisplayName: c.UserDisplay})
-		counts[names[i]]++
+		// Cap the name before the id prefix is appended, so a long
+		// site-supplied name can never push the disambiguator off screen.
+		labels[i] = truncate(sanitizePickerField(names[i]), maxPickerNameRunes)
+		if labels[i] == "" {
+			labels[i] = "this account"
+		}
+		counts[labels[i]]++
 	}
 
 	items := make([]accountPickerItem, len(matches))
 	for i, c := range matches {
+		// Credential ids are always credentialIDLen random bytes (see
+		// vault.addCredential), so the prefix is never empty and is what
+		// keeps colliding rows apart.
 		id := credIDPrefix(c.ID)
-		name := names[i]
-		// Cap the name before the id prefix is appended, so a long
-		// site-supplied name can never push the disambiguator off screen.
-		label := truncate(sanitizePickerField(name), maxPickerNameRunes)
-		if label == "" {
-			label = "this account"
+		label := labels[i]
+		var date string
+		if !c.CreatedAt.IsZero() {
+			date = c.CreatedAt.Local().Format("2006-01-02")
 		}
 		subtext := id
-		if !c.CreatedAt.IsZero() {
-			subtext = id + " · " + c.CreatedAt.UTC().Format("2006-01-02")
+		if date != "" {
+			subtext = id + " · " + date
 		}
-		if counts[name] > 1 {
+		if counts[label] > 1 {
 			// omarchy shows the subtext, but a backend that only renders
 			// the label would still present two identical rows. Fold the
-			// credential-id prefix into the label when the name is shared.
-			if id != "" {
-				label = label + " · " + id
-			} else {
-				label = fmt.Sprintf("%s · #%d", label, i+1)
-			}
+			// credential-id prefix into the label when the name is shared,
+			// and leave only the date in the subtext so it is not repeated.
+			label = label + " · " + id
+			subtext = date
 		}
-		label = sanitizePickerField(label)
-		subtext = sanitizePickerField(subtext)
+		key := label
+		if subtext != "" {
+			key += "\t" + subtext
+		}
 		items[i] = accountPickerItem{
 			cred:    c,
-			name:    name,
+			name:    names[i],
 			label:   label,
 			id:      id,
 			subtext: subtext,
 			row:     "\t" + label + "\t" + subtext,
-			key:     label + "\t" + subtext,
+			key:     key,
 		}
 	}
 	return accountPicker{items: items}
@@ -576,18 +589,27 @@ func (p accountPicker) rows() []string {
 	return out
 }
 
-// match maps a picker result onto exactly one row. It accepts the option we
-// passed (index), the omarchy label\tsubtext key, or a unique credential-id
-// prefix. A bare shared display name is refused: that is the indexOf() bug.
+// match maps a picker result onto exactly one row. In order it accepts: the
+// omarchy label\tsubtext key (or the row string we passed, once surrounding
+// whitespace is trimmed), a unique credential-id prefix, or a visible label
+// that only one row carries. Anything that fits more than one row is refused,
+// so a bare shared display name never resolves to the first match.
 func (p accountPicker) match(choice string) int {
 	choice = strings.TrimSpace(choice)
 	if choice == "" {
 		return -1
 	}
+	found := -1
 	for i, it := range p.items {
-		if choice == it.row || choice == it.key {
-			return i
+		if choice == it.key || choice == strings.TrimSpace(it.row) {
+			if found >= 0 {
+				return -1
+			}
+			found = i
 		}
+	}
+	if found >= 0 {
+		return found
 	}
 	if i := p.matchByCredID(choice); i >= 0 {
 		return i
@@ -595,7 +617,6 @@ func (p accountPicker) match(choice string) int {
 	// Other backends may echo only the visible label. Accept that iff the
 	// label is unique in this picker. Two "alice" rows must not collapse
 	// to the first match.
-	found := -1
 	for i, it := range p.items {
 		if choice == it.label {
 			if found >= 0 {
