@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -142,10 +143,16 @@ func TestParsePseudoVersion(t *testing.T) {
 // TestVersionFlagWithLdflags builds a real binary the way a release would, so
 // a mistake in the -X paths or the flag name cannot hide behind a unit test
 // that never reaches main().
+// It does a full build, so -short skips it.
 func TestVersionFlagWithLdflags(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary; skipped with -short")
+	}
 	bin := filepath.Join(t.TempDir(), "llavero")
 	ldflags := "-X main.version=v0.1.0 -X main.commit=230caa9 -X main.commitDate=2026-09-17"
-	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", bin, ".")
+	// The toolchain running this test, not whatever "go" is first on PATH.
+	goBin := filepath.Join(runtime.GOROOT(), "bin", "go")
+	build := exec.Command(goBin, "build", "-ldflags", ldflags, "-o", bin, ".")
 	build.Env = append(os.Environ(), "GOFLAGS=")
 	out, err := build.CombinedOutput()
 	if err != nil {
