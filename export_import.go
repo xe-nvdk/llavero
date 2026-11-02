@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -188,14 +190,29 @@ func verifyPortableExport(dest string, passphrase []byte, want []storedCredentia
 	if len(got) != len(want) {
 		return fmt.Errorf("credential count changed during export (%d → %d)", len(want), len(got))
 	}
-	wantIDs := make(map[string]struct{}, len(want))
+	// Compare whole records, not just ids: a backup is only proof of
+	// anything if every key, user handle and counter comes back exactly.
+	wantByID := make(map[string][]byte, len(want))
 	for _, c := range want {
-		wantIDs[string(c.ID)] = struct{}{}
+		enc, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		wantByID[string(c.ID)] = enc
 	}
 	for _, c := range got {
-		if _, ok := wantIDs[string(c.ID)]; !ok {
-			return errors.New("exported vault credentials do not match the source")
+		enc, err := json.Marshal(c)
+		if err != nil {
+			return err
 		}
+		w, ok := wantByID[string(c.ID)]
+		if !ok || !bytes.Equal(w, enc) {
+			return fmt.Errorf("exported credential %x does not match the source", c.ID[:4])
+		}
+		delete(wantByID, string(c.ID))
+	}
+	if len(wantByID) != 0 {
+		return errors.New("exported vault is missing credentials from the source")
 	}
 	return nil
 }

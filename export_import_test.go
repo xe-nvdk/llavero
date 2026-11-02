@@ -643,3 +643,43 @@ func TestImportRefusesNonPortableFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyExportComparesWholeRecords(t *testing.T) {
+	dir := t.TempDir()
+	pass := []byte("backup-passphrase")
+	want := []storedCredential{
+		testStoredCred("example.test", "alice", 7, "cred-alice"),
+		testStoredCred("example.test", "bob", 2, "cred-bob"),
+	}
+
+	good := filepath.Join(dir, "good.pkv")
+	seedPassphraseVault(t, good, pass, want...)
+	if err := verifyPortableExport(good, pass, want); err != nil {
+		t.Fatalf("faithful copy rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*storedCredential){
+		"key":     func(c *storedCredential) { c.PrivateKey = testStoredCred("x", "x", 0, "x").PrivateKey },
+		"counter": func(c *storedCredential) { c.SignCount = 0 },
+		"user":    func(c *storedCredential) { c.UserID = []byte("mallory") },
+		"site":    func(c *storedCredential) { c.RPID = "evil.test" },
+	} {
+		bad := make([]storedCredential, len(want))
+		for i, c := range want {
+			bad[i] = cloneCredential(c)
+		}
+		mutate(&bad[1])
+		path := filepath.Join(dir, name+".pkv")
+		seedPassphraseVault(t, path, pass, bad...)
+		if err := verifyPortableExport(path, pass, want); err == nil {
+			t.Errorf("a copy with a different %s was accepted as a faithful backup", name)
+		}
+	}
+
+	// Same count, but one id duplicated and another missing.
+	dup := filepath.Join(dir, "dup.pkv")
+	seedPassphraseVault(t, dup, pass, want[0], want[0])
+	if err := verifyPortableExport(dup, pass, want); err == nil {
+		t.Error("a copy with a duplicated record in place of a missing one was accepted")
+	}
+}
