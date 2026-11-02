@@ -57,8 +57,8 @@ func runExport(opts options, dest string) error {
 	return nil
 }
 
-// runImport merges a portable backup into the current vault. Colliding
-// (rpId, userId) pairs keep the credential with the higher signature counter.
+// runImport merges a portable backup into the current vault. It only adds
+// credentials or raises counters; it never removes a local key.
 func runImport(opts options, src string) error {
 	src, err := normalizePortablePath(src, "import")
 	if err != nil {
@@ -89,12 +89,12 @@ func runImport(opts options, src string) error {
 		return fmt.Errorf("opening backup %s: %w", src, err)
 	}
 
-	added, replaced, kept, err := v.mergeCredentials(incoming.list())
+	res, err := v.mergeCredentials(incoming.list())
 	if err != nil {
 		return err
 	}
-	logf("imported %s: %d added, %d replaced (higher sign count), %d kept",
-		src, added, replaced, kept)
+	logf("imported %s: %d added, %d counter(s) raised, %d unchanged",
+		src, res.Added, res.Updated, res.Unchanged)
 	return nil
 }
 

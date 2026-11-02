@@ -218,45 +218,6 @@ func TestExportLeavesNoTpmOrBak(t *testing.T) {
 	}
 }
 
-func TestImportMergePrefersHigherCounter(t *testing.T) {
-	dir := t.TempDir()
-	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"),
-		testStoredCred("example.test", "alice", 3, "local-alice"),
-		testStoredCred("example.test", "bob", 8, "local-bob"),
-		testStoredCred("example.test", "carol", 4, "local-carol"),
-	)
-	incoming := []storedCredential{
-		testStoredCred("example.test", "alice", 9, "backup-alice"),
-		testStoredCred("example.test", "bob", 2, "backup-bob"),
-		testStoredCred("example.test", "carol", 4, "backup-carol"),
-	}
-
-	added, replaced, kept, err := current.mergeCredentials(incoming)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if added != 0 || replaced != 1 || kept != 2 {
-		t.Fatalf("merge stats added=%d replaced=%d kept=%d, want 0/1/2", added, replaced, kept)
-	}
-
-	byUser := map[string]storedCredential{}
-	for _, c := range current.list() {
-		byUser[string(c.UserID)] = c
-	}
-	alice := byUser["alice"]
-	if alice.SignCount != 9 || !bytes.Equal(alice.ID, testCredID("backup-alice")) {
-		t.Fatalf("alice = id %x count %d, want backup-alice / 9", alice.ID, alice.SignCount)
-	}
-	bob := byUser["bob"]
-	if bob.SignCount != 8 || !bytes.Equal(bob.ID, testCredID("local-bob")) {
-		t.Fatalf("bob = id %x count %d, want local-bob / 8 (higher local counter)", bob.ID, bob.SignCount)
-	}
-	carol := byUser["carol"]
-	if carol.SignCount != 4 || !bytes.Equal(carol.ID, testCredID("local-carol")) {
-		t.Fatalf("carol = id %x count %d, want local-carol / 4 (equal counter keeps current)", carol.ID, carol.SignCount)
-	}
-}
-
 func TestImportMergeNonCollision(t *testing.T) {
 	dir := t.TempDir()
 	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"),
@@ -266,12 +227,12 @@ func TestImportMergeNonCollision(t *testing.T) {
 		testStoredCred("other.test", "bob", 5, "backup-bob"),
 	}
 
-	added, replaced, kept, err := current.mergeCredentials(incoming)
+	res, err := current.mergeCredentials(incoming)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if added != 1 || replaced != 0 || kept != 0 {
-		t.Fatalf("merge stats added=%d replaced=%d kept=%d, want 1/0/0", added, replaced, kept)
+	if res != (mergeResult{Added: 1}) {
+		t.Fatalf("merge stats %+v, want 1 added", res)
 	}
 
 	got := current.list()
@@ -314,17 +275,18 @@ func TestImportMergesThroughCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.count() != 2 {
-		t.Fatalf("count = %d, want 2", got.count())
+	// The local and backup keys for alice are different ids, so both stay.
+	if got.count() != 3 {
+		t.Fatalf("count = %d, want 3", got.count())
 	}
-	var alice storedCredential
+	ids := map[string]bool{}
 	for _, c := range got.list() {
-		if string(c.UserID) == "alice" {
-			alice = c
-		}
+		ids[string(c.ID)] = true
 	}
-	if alice.SignCount != 6 || !bytes.Equal(alice.ID, testCredID("backup-alice")) {
-		t.Fatalf("alice = id %x count %d, want the imported higher-counter credential", alice.ID, alice.SignCount)
+	for _, want := range []string{"local-alice", "backup-alice", "backup-carol"} {
+		if !ids[string(testCredID(want))] {
+			t.Fatalf("missing %s after import", want)
+		}
 	}
 }
 
@@ -339,5 +301,80 @@ func TestExportUsageAndSelfPath(t *testing.T) {
 	defer closeFDs()
 	if err := runExport(opts, src); err == nil || !strings.Contains(err.Error(), "live vault") {
 		t.Fatalf("export onto self: %v", err)
+	}
+}
+
+// A re-registered passkey starts at counter 0 under a new id. An older backup
+// of the same account must not displace it: counters of different ids are not
+// comparable, and losing the local key can lock the user out.
+func TestImportNeverDisplacesLocalKey(t *testing.T) {
+	dir := t.TempDir()
+	local := testStoredCred("example.test", "alice", 0, "new-alice")
+	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"), local)
+	backup := testStoredCred("example.test", "alice", 9, "old-alice")
+
+	res, err := current.mergeCredentials([]storedCredential{backup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != (mergeResult{Added: 1}) {
+		t.Fatalf("merge stats %+v, want 1 added", res)
+	}
+
+	got := map[string]storedCredential{}
+	for _, c := range current.list() {
+		got[string(c.ID)] = c
+	}
+	l, ok := got[string(local.ID)]
+	if !ok {
+		t.Fatal("import destroyed the local re-registered key")
+	}
+	if !bytes.Equal(l.PrivateKey, local.PrivateKey) || l.SignCount != 0 {
+		t.Fatal("import altered the local key")
+	}
+	if _, ok := got[string(backup.ID)]; !ok {
+		t.Fatal("import dropped the backup key for the same account; both should be kept")
+	}
+	// The local key must stay the one a discoverable sign-in picks.
+	if m := current.findForRP("example.test", nil); len(m) != 2 || !bytes.Equal(m[0].ID, local.ID) {
+		t.Fatalf("findForRP order: local key is not preferred")
+	}
+}
+
+// Same credential id: one copy, the higher counter, and the local key bytes.
+func TestImportSameIDTakesMaxCounter(t *testing.T) {
+	dir := t.TempDir()
+	a := testStoredCred("example.test", "alice", 3, "cred-alice")
+	b := testStoredCred("example.test", "bob", 5, "cred-bob")
+	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"), a, b)
+
+	aBackup := cloneCredential(a)
+	aBackup.SignCount = 9
+	aBackup.PrivateKey = testStoredCred("x", "x", 0, "x").PrivateKey
+	bBackup := cloneCredential(b)
+	bBackup.SignCount = 1
+
+	res, err := current.mergeCredentials([]storedCredential{aBackup, bBackup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != (mergeResult{Updated: 1, Unchanged: 1}) {
+		t.Fatalf("merge stats %+v, want 1 updated, 1 unchanged", res)
+	}
+	got := current.list()
+	if len(got) != 2 {
+		t.Fatalf("count = %d, want 2 (same id must not duplicate)", len(got))
+	}
+	for _, c := range got {
+		switch {
+		case bytes.Equal(c.ID, a.ID):
+			if c.SignCount != 9 || !bytes.Equal(c.PrivateKey, a.PrivateKey) {
+				t.Fatalf("alice: count %d (want 9), key replaced=%v", c.SignCount, !bytes.Equal(c.PrivateKey, a.PrivateKey))
+			}
+		case bytes.Equal(c.ID, b.ID):
+			if c.SignCount != 5 {
+				t.Fatalf("bob: count %d, want 5 (counter must never go down)", c.SignCount)
+			}
+		}
 	}
 }

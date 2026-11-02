@@ -321,10 +321,6 @@ func cloneContents(in vaultContents) vaultContents {
 	return out
 }
 
-func credentialIdentity(c storedCredential) string {
-	return c.RPID + "\x00" + string(c.UserID)
-}
-
 // snapshot copies every credential. Export uses it so the live vault is only
 // read, even while the service holds the same file open.
 func (v *vault) snapshot() vaultContents {
@@ -341,37 +337,71 @@ func (v *vault) exportPortable(dest string, passphrase []byte) error {
 	return clone.rekey(modePassphrase, passphrase)
 }
 
-// mergeCredentials adds incoming passkeys. On a colliding (rpId, userId)
-// pair the higher signature counter wins; addCredential would replace
-// blindly, which is right for re-registration and wrong for a restore.
-func (v *vault) mergeCredentials(incoming []storedCredential) (added, replaced, kept int, err error) {
+// mergeResult reports what an import did, per incoming credential.
+type mergeResult struct {
+	Added     int // credential id not present locally; stored
+	Updated   int // same id already present; its counter was raised
+	Unchanged int // same id already present with an equal or higher counter
+}
+
+// mergeCredentials adds incoming passkeys without ever removing or replacing
+// a local one.
+//
+// Credentials are matched by id, the only thing that makes two records the
+// same key. Signature counters belong to one id and are not comparable
+// across ids: a freshly re-registered passkey starts at 0 and would lose any
+// "higher counter wins" contest against an old backup of the same account.
+//
+//   - Same id: keep the local record and raise its counter to the larger of
+//     the two, so the next assertion never goes backwards.
+//   - New id, even for an (rpId, userId) already present: store it. Both keys
+//     may be registered with the relying party, which decides which it
+//     accepts. It is inserted just before the local key for that account so
+//     findForRP, which lists newest first, keeps offering the local one first.
+func (v *vault) mergeCredentials(incoming []storedCredential) (mergeResult, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	index := make(map[string]int, len(v.contents.Credentials))
-	for i, c := range v.contents.Credentials {
-		index[credentialIdentity(c)] = i
-	}
+	var res mergeResult
 	for _, inc := range incoming {
 		inc = cloneCredential(inc)
-		key := credentialIdentity(inc)
-		if i, ok := index[key]; ok {
-			if inc.SignCount > v.contents.Credentials[i].SignCount {
-				v.contents.Credentials[i] = inc
-				replaced++
-			} else {
-				kept++
+		creds := v.contents.Credentials
+
+		existing, sameAccount := -1, -1
+		for i := range creds {
+			if string(creds[i].ID) == string(inc.ID) {
+				existing = i
+				break
 			}
-			continue
+			if sameAccount < 0 && creds[i].RPID == inc.RPID && string(creds[i].UserID) == string(inc.UserID) {
+				sameAccount = i
+			}
 		}
-		v.contents.Credentials = append(v.contents.Credentials, inc)
-		index[key] = len(v.contents.Credentials) - 1
-		added++
+
+		switch {
+		case existing >= 0:
+			if inc.SignCount > creds[existing].SignCount {
+				creds[existing].SignCount = inc.SignCount
+				res.Updated++
+			} else {
+				res.Unchanged++
+			}
+		case sameAccount >= 0:
+			out := make([]storedCredential, 0, len(creds)+1)
+			out = append(out, creds[:sameAccount]...)
+			out = append(out, inc)
+			out = append(out, creds[sameAccount:]...)
+			v.contents.Credentials = out
+			res.Added++
+		default:
+			v.contents.Credentials = append(creds, inc)
+			res.Added++
+		}
 	}
-	if added == 0 && replaced == 0 {
-		return added, replaced, kept, nil
+	if res.Added == 0 && res.Updated == 0 {
+		return res, nil
 	}
-	return added, replaced, kept, v.save()
+	return res, v.save()
 }
 
 // rekey rewrites an already-open vault under a new mode, preserving every
@@ -512,7 +542,8 @@ func (v *vault) addCredential(rp rpEntity, user userEntity) (*storedCredential, 
 
 	// One passkey per (rpId, userId). Re-registering the same account replaces
 	// the old key rather than accumulating credentials the RP will never ask
-	// for again.
+	// for again. Import is the exception: it may hold a second key for an
+	// account (see mergeCredentials), and only the first match is replaced.
 	replaced := false
 	for i := range v.contents.Credentials {
 		c := &v.contents.Credentials[i]

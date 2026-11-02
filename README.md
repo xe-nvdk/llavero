@@ -156,9 +156,12 @@ llavero export ~/backup.pkv          # refuses to overwrite without -force
 llavero import ~/backup.pkv          # merge into the current vault
 ```
 
-`import` adds credentials that are not already present. On a colliding
-`(rpId, userId)` pair the higher signature counter wins, so a restore does
-not blindly replace a passkey the way re-registration does. Stop the service
+`import` only adds: it never removes or replaces a local passkey.
+Credentials are matched by credential id. One already present keeps its
+local key and takes the higher of the two signature counters. One with a new
+id is added, even when this vault already has a different passkey for the
+same site and account; the site decides which of the two it accepts, and the
+local one stays first in the sign-in picker. Stop the service
 before importing: the daemon holds its own copy in memory and its next write
 would overwrite the merge.
 
