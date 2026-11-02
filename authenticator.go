@@ -222,7 +222,7 @@ func (a *authenticator) makeCredential(body []byte) []byte {
 		return []byte{statusCredentialExcluded}
 	}
 
-	label := displayName(req.User)
+	label := sanitizePickerField(displayName(req.User))
 	title := fmt.Sprintf("Create a passkey for %s?", req.RP.ID)
 	if label != "" {
 		title = fmt.Sprintf("Create a passkey for %s as %s?", req.RP.ID, label)
@@ -285,33 +285,34 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 	}
 
 	// With several accounts at one site, let the user pick rather than
-	// silently choosing for them.
+	// silently choosing for them. Rows carry a credential-id subtext (and a
+	// disambiguated label when names collide) so two "alice" accounts, or two
+	// nameless ones that both fall back to "this account", stay distinct.
+	// The reply is matched against each row's label\tsubtext key, then a
+	// credential-id prefix, then a label only one row carries; anything
+	// ambiguous is denied rather than resolved to the first match.
 	chosen := matches[0]
 	if len(matches) > 1 {
-		labels := make([]string, 0, len(matches))
-		for _, c := range matches {
-			labels = append(labels, displayName(userEntity{
-				Name: c.UserName, DisplayName: c.UserDisplay,
-			}))
-		}
+		picker := newAccountPicker(matches)
 		choice, err := a.approver.confirm(
-			fmt.Sprintf("Sign in to %s as:", req.RPID), labels)
+			fmt.Sprintf("Sign in to %s as:", req.RPID), picker.rows())
 		if err != nil || choice == "" {
 			a.logf("getAssertion: declined or timed out for %s", req.RPID)
 			return []byte{statusOperationDenied}
 		}
-		idx := indexOf(labels, choice)
+		idx := picker.match(choice)
 		if idx < 0 {
+			a.logf("getAssertion: picker result %q did not identify a credential for %s", choice, req.RPID)
 			return []byte{statusOperationDenied}
 		}
-		chosen = matches[idx]
+		chosen = picker.items[idx].cred
 		// Choosing an account is itself the consent, so only verification is
 		// left to do.
-		if !a.verifyUserFor(req.RPID, fmt.Sprintf("Sign in to %s as %s", req.RPID, labels[idx])) {
+		if !a.verifyUserFor(req.RPID, fmt.Sprintf("Sign in to %s as %s", req.RPID, picker.items[idx].label)) {
 			return []byte{statusOperationDenied}
 		}
 	} else {
-		label := displayName(userEntity{Name: chosen.UserName, DisplayName: chosen.UserDisplay})
+		label := sanitizePickerField(displayName(userEntity{Name: chosen.UserName, DisplayName: chosen.UserDisplay}))
 		title := fmt.Sprintf("Sign in to %s?", req.RPID)
 		if label != "" {
 			title = fmt.Sprintf("Sign in to %s as %s?", req.RPID, label)
@@ -366,7 +367,8 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 		return []byte{statusOther}
 	}
 
-	a.logf("signed assertion for %s (%s), counter now %d", req.RPID, chosen.UserName, count)
+	a.logf("signed assertion for %s (%s, credential %s), counter now %d",
+		req.RPID, sanitizePickerField(chosen.UserName), credIDPrefix(chosen.ID), count)
 	return append([]byte{statusOK}, out...)
 }
 
@@ -461,11 +463,192 @@ func isPrintable(s string) bool {
 	return true
 }
 
-func indexOf(hay []string, needle string) int {
-	for i, s := range hay {
-		if s == needle {
-			return i
+// credIDPrefix is the same fragment -list prints in the CREDENTIAL column, so
+// the picker subtext matches what the user already sees in the vault listing.
+func credIDPrefix(id []byte) string {
+	n := 8
+	if len(id) < n {
+		n = len(id)
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%x", id[:n])
+}
+
+// sanitizePickerField makes site-supplied text safe to put in a prompt. The
+// name and display name come from the relying party, so they can carry
+// anything: a NUL makes exec of the picker fail (denying every sign-in to
+// that site), a tab or newline breaks the row format, and bidi overrides or
+// zero-width characters let two different accounts render identically.
+// Whitespace becomes a single space; other control, format (Cf) and
+// non-printable runes are dropped.
+func sanitizePickerField(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r):
+			b.WriteRune(' ')
+		case unicode.Is(unicode.Cf, r), !unicode.IsPrint(r):
+			// dropped
+		default:
+			b.WriteRune(r)
 		}
 	}
-	return -1
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// accountPickerItem is one row in the multi-account sign-in menu.
+//
+// row is the omarchy-menu-select three-field form (empty glyph, label,
+// subtext). key is what that picker returns for such a row — label\tsubtext —
+// which is unique because the credential-id prefix is in the subtext or, when
+// names collide, in the label. The label is also what the fingerprint prompt
+// names, so two "alice" accounts are told apart there too. name is the raw
+// display name.
+type accountPickerItem struct {
+	cred    storedCredential
+	name    string
+	label   string
+	id      string
+	subtext string
+	row     string
+	key     string
+}
+
+// maxPickerNameRunes bounds the account name shown in the picker.
+const maxPickerNameRunes = 40
+
+type accountPicker struct {
+	items []accountPickerItem
+}
+
+func newAccountPicker(matches []storedCredential) accountPicker {
+	// Collisions are decided on what the user will actually see, after
+	// cleaning and truncation: names that differ only by invisible runes, or
+	// only past the truncation point, still look identical.
+	names := make([]string, len(matches))
+	labels := make([]string, len(matches))
+	counts := make(map[string]int, len(matches))
+	for i, c := range matches {
+		names[i] = displayName(userEntity{Name: c.UserName, DisplayName: c.UserDisplay})
+		// Cap the name before the id prefix is appended, so a long
+		// site-supplied name can never push the disambiguator off screen.
+		labels[i] = truncate(sanitizePickerField(names[i]), maxPickerNameRunes)
+		if labels[i] == "" {
+			labels[i] = "this account"
+		}
+		counts[labels[i]]++
+	}
+
+	items := make([]accountPickerItem, len(matches))
+	for i, c := range matches {
+		// Credential ids are always credentialIDLen random bytes (see
+		// vault.addCredential), so the prefix is never empty and is what
+		// keeps colliding rows apart.
+		id := credIDPrefix(c.ID)
+		label := labels[i]
+		var date string
+		if !c.CreatedAt.IsZero() {
+			date = c.CreatedAt.Local().Format("2006-01-02")
+		}
+		subtext := id
+		if date != "" {
+			subtext = id + " · " + date
+		}
+		if counts[label] > 1 {
+			// omarchy shows the subtext, but a backend that only renders
+			// the label would still present two identical rows. Fold the
+			// credential-id prefix into the label when the name is shared,
+			// and leave only the date in the subtext so it is not repeated.
+			label = label + " · " + id
+			subtext = date
+		}
+		key := label
+		if subtext != "" {
+			key += "\t" + subtext
+		}
+		items[i] = accountPickerItem{
+			cred:    c,
+			name:    names[i],
+			label:   label,
+			id:      id,
+			subtext: subtext,
+			row:     "\t" + label + "\t" + subtext,
+			key:     key,
+		}
+	}
+	return accountPicker{items: items}
+}
+
+func (p accountPicker) rows() []string {
+	out := make([]string, len(p.items))
+	for i, it := range p.items {
+		out[i] = it.row
+	}
+	return out
+}
+
+// match maps a picker result onto exactly one row. In order it accepts: the
+// omarchy label\tsubtext key (or the row string we passed, once surrounding
+// whitespace is trimmed), a unique credential-id prefix, or a visible label
+// that only one row carries. Anything that fits more than one row is refused,
+// so a bare shared display name never resolves to the first match.
+func (p accountPicker) match(choice string) int {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return -1
+	}
+	found := -1
+	for i, it := range p.items {
+		if choice == it.key || choice == strings.TrimSpace(it.row) {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	if found >= 0 {
+		return found
+	}
+	if i := p.matchByCredID(choice); i >= 0 {
+		return i
+	}
+	// Other backends may echo only the visible label. Accept that iff the
+	// label is unique in this picker. Two "alice" rows must not collapse
+	// to the first match.
+	for i, it := range p.items {
+		if choice == it.label {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
+}
+
+func (p accountPicker) matchByCredID(choice string) int {
+	token := choice
+	if i := strings.LastIndexByte(choice, '\t'); i >= 0 {
+		token = choice[i+1:]
+	}
+	if i := strings.Index(token, " · "); i >= 0 {
+		token = token[:i]
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return -1
+	}
+	found := -1
+	for i, it := range p.items {
+		if it.id != "" && it.id == token {
+			if found >= 0 {
+				return -1
+			}
+			found = i
+		}
+	}
+	return found
 }

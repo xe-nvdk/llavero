@@ -558,8 +558,8 @@ func runList(opts options) error {
 		if account == "" {
 			account = c.UserDisplay
 		}
-		fmt.Printf("%-28s  %-34s  %-16x  %5d  %s\n",
-			truncate(c.RPID, 28), truncate(account, 34), c.ID[:8], c.SignCount,
+		fmt.Printf("%-28s  %-34s  %-16s  %5d  %s\n",
+			truncate(c.RPID, 28), truncate(account, 34), credIDPrefix(c.ID), c.SignCount,
 			c.CreatedAt.Local().Format("2006-01-02 15:04"))
 	}
 	fmt.Printf("\n%d passkey(s).\n", len(creds))
@@ -659,12 +659,18 @@ func sameFile(a, b string) bool {
 	return resolve(a) == resolve(b)
 }
 
+// truncate shortens s to at most n runes, ending in an ellipsis when it cuts.
+// It counts runes rather than bytes so a multi-byte character is never split.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	if n <= 1 {
-		return s[:n]
+	if n == 1 {
+		return string(r[:1])
 	}
-	return s[:n-1] + "\u2026"
+	return string(r[:n-1]) + "\u2026"
 }
