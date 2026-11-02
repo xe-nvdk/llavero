@@ -45,7 +45,7 @@ _llavero() {
 	# -mlock defaults to true; the useful completion is turning it off.
 	local opts="-vault -unlock -rekey -uv -uv-strict -consent -uv-grace
 		-mlock -mlock=false -list -forget -auto-approve
-		-passphrase-fd -new-passphrase-fd -tpm-selftest -v -h"
+		-passphrase-fd -new-passphrase-fd -tpm-selftest -v -version -h"
 
 	mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }

@@ -25,4 +25,5 @@ _arguments -S \
 	'-new-passphrase-fd[read the new passphrase for -rekey from this fd]:fd:(0)' \
 	'-tpm-selftest[seal and unseal a test secret, then exit]' \
 	'-v[log every CTAPHID frame]' \
+	'-version[print version, commit hash and commit date, then exit]' \
 	'-h[print flag defaults and exit]'

@@ -22,9 +22,10 @@ With no action flags,
 unlocks the vault and runs as the authenticator daemon.
 .BR \-list ,
 .BR \-forget ,
-.B \-rekey
-and
+.BR \-rekey ,
 .B \-tpm-selftest
+and
+.B \-version
 run their action and exit.
 .SH OPTIONS
 .TP
@@ -148,6 +149,9 @@ Testing only.
 .TP
 .B \-v
 Log every CTAPHID frame.
+.TP
+.B \-version
+Print the version, commit hash and commit date, then exit.
 .TP
 .B \-h
 Print flag defaults and exit.
