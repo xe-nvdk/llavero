@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var errExportExists = errors.New("destination already exists (pass -force to overwrite)")
@@ -73,6 +74,12 @@ func runImport(opts options, src string) error {
 			"       Stop it first:  systemctl --user stop llavero.service")
 	}
 
+	_, statErr := os.Stat(opts.vaultPath)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	isNew := errors.Is(statErr, os.ErrNotExist)
+
 	v, err := loadVault(opts)
 	if err != nil {
 		return err
@@ -89,8 +96,26 @@ func runImport(opts options, src string) error {
 		return fmt.Errorf("opening backup %s: %w", src, err)
 	}
 
-	res, err := v.mergeCredentials(incoming.list())
+	// Copy the vault aside before it is rewritten, as -rekey does. A freshly
+	// created vault holds nothing worth keeping.
+	var saved string
+	beforeWrite := func() error {
+		if isNew {
+			return nil
+		}
+		b, err := backupVaultFile(opts.vaultPath)
+		if err != nil {
+			return fmt.Errorf("could not back up the vault, refusing to import: %w", err)
+		}
+		saved = b
+		logf("backed up the existing vault to %s", b)
+		return nil
+	}
+	res, err := v.mergeCredentials(incoming.list(), beforeWrite)
 	if err != nil {
+		if saved != "" {
+			return fmt.Errorf("import failed (your backup at %s is still good): %w", saved, err)
+		}
 		return err
 	}
 	logf("imported %s: %d added, %d counter(s) raised, %d unchanged",
@@ -150,4 +175,44 @@ func cleanupExportSiblings(dest string) {
 	for _, m := range matches {
 		_ = os.Remove(m)
 	}
+}
+
+// backupVaultFile copies the vault to <vault>.bak-<timestamp>. It never
+// overwrites an existing file: a second backup in the same second gets a
+// numeric suffix instead of replacing the first.
+func backupVaultFile(vaultPath string) (string, error) {
+	data, err := os.ReadFile(vaultPath)
+	if err != nil {
+		return "", err
+	}
+	base := fmt.Sprintf("%s.bak-%s", vaultPath, time.Now().Format("20060102-150405"))
+	for i := 0; i < 100; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if _, err := f.Write(data); err != nil {
+			f.Close()
+			os.Remove(name)
+			return "", err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			os.Remove(name)
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			os.Remove(name)
+			return "", err
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("too many backups named %s*", base)
 }

@@ -358,11 +358,19 @@ type mergeResult struct {
 //     may be registered with the relying party, which decides which it
 //     accepts. It is inserted just before the local key for that account so
 //     findForRP, which lists newest first, keeps offering the local one first.
-func (v *vault) mergeCredentials(incoming []storedCredential) (mergeResult, error) {
+//
+// beforeWrite, if set, runs once before the vault file is rewritten, and an
+// error from it aborts the merge with nothing written. It is not called when
+// the merge changes nothing.
+func (v *vault) mergeCredentials(incoming []storedCredential, beforeWrite func() error) (mergeResult, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	var res mergeResult
+	orig := v.contents.Credentials
+	work := make([]storedCredential, len(orig))
+	copy(work, orig)
+	v.contents.Credentials = work
 	for _, inc := range incoming {
 		inc = cloneCredential(inc)
 		creds := v.contents.Credentials
@@ -399,9 +407,20 @@ func (v *vault) mergeCredentials(incoming []storedCredential) (mergeResult, erro
 		}
 	}
 	if res.Added == 0 && res.Updated == 0 {
+		v.contents.Credentials = orig
 		return res, nil
 	}
-	return res, v.save()
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			v.contents.Credentials = orig
+			return mergeResult{}, err
+		}
+	}
+	if err := v.save(); err != nil {
+		v.contents.Credentials = orig
+		return mergeResult{}, err
+	}
+	return res, nil
 }
 
 // rekey rewrites an already-open vault under a new mode, preserving every

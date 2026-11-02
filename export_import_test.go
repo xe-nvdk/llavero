@@ -227,7 +227,7 @@ func TestImportMergeNonCollision(t *testing.T) {
 		testStoredCred("other.test", "bob", 5, "backup-bob"),
 	}
 
-	res, err := current.mergeCredentials(incoming)
+	res, err := current.mergeCredentials(incoming, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestImportNeverDisplacesLocalKey(t *testing.T) {
 	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"), local)
 	backup := testStoredCred("example.test", "alice", 9, "old-alice")
 
-	res, err := current.mergeCredentials([]storedCredential{backup})
+	res, err := current.mergeCredentials([]storedCredential{backup}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestImportSameIDTakesMaxCounter(t *testing.T) {
 	bBackup := cloneCredential(b)
 	bBackup.SignCount = 1
 
-	res, err := current.mergeCredentials([]storedCredential{aBackup, bBackup})
+	res, err := current.mergeCredentials([]storedCredential{aBackup, bBackup}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,5 +376,55 @@ func TestImportSameIDTakesMaxCounter(t *testing.T) {
 				t.Fatalf("bob: count %d, want 5 (counter must never go down)", c.SignCount)
 			}
 		}
+	}
+}
+
+func importOpts(t *testing.T, vaultPath, vaultPass, backupPass string) (options, func()) {
+	t.Helper()
+	srcFD, srcClose := pipePassphrase(t, vaultPass)
+	newFD, newClose := pipePassphrase(t, backupPass)
+	return options{vaultPath: vaultPath, passFD: srcFD, newPassFD: newFD, unlock: "passphrase"},
+		func() { srcClose(); newClose() }
+}
+
+// Import rewrites the live vault, so it must leave a copy of the previous
+// file behind first, as -rekey does. A no-op import writes nothing.
+func TestImportBacksUpVaultFirst(t *testing.T) {
+	dir := t.TempDir()
+	currentPath := filepath.Join(dir, "vault.pkv")
+	backupPath := filepath.Join(dir, "backup.pkv")
+	seedPassphraseVault(t, currentPath, []byte("current-pass"),
+		testStoredCred("example.test", "alice", 1, "local-alice"))
+	seedPassphraseVault(t, backupPath, []byte("backup-pass"),
+		testStoredCred("other.test", "bob", 1, "backup-bob"))
+	before, err := os.ReadFile(currentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts, closeFDs := importOpts(t, currentPath, "current-pass", "backup-pass")
+	defer closeFDs()
+	if err := runImport(opts, backupPath); err != nil {
+		t.Fatal(err)
+	}
+	baks, _ := filepath.Glob(currentPath + ".bak-*")
+	if len(baks) != 1 {
+		t.Fatalf("backups = %v, want exactly one", baks)
+	}
+	got, err := os.ReadFile(baks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatal("backup does not match the vault as it was before import")
+	}
+
+	opts, closeFDs = importOpts(t, currentPath, "current-pass", "backup-pass")
+	defer closeFDs()
+	if err := runImport(opts, backupPath); err != nil {
+		t.Fatal(err)
+	}
+	if baks2, _ := filepath.Glob(currentPath + ".bak-*"); len(baks2) != 1 {
+		t.Fatalf("a no-op re-import wrote another backup: %v", baks2)
 	}
 }
