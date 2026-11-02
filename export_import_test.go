@@ -2,6 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,13 +15,30 @@ import (
 	"time"
 )
 
+// testCredID derives a 32-byte credential id from a readable label, so tests
+// can build realistic records and still assert on them by name.
+func testCredID(label string) []byte {
+	sum := sha256.Sum256([]byte(label))
+	return sum[:]
+}
+
+// testStoredCred builds a record shaped like one addCredential writes: a
+// 32-byte id and a real P-256 PKCS#8 key.
 func testStoredCred(rp, user string, count uint32, id string) storedCredential {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		panic(err)
+	}
 	return storedCredential{
-		ID:         []byte(id),
+		ID:         testCredID(id),
 		RPID:       rp,
 		UserID:     []byte(user),
 		UserName:   user,
-		PrivateKey: []byte("pkcs8-" + id),
+		PrivateKey: pkcs8,
 		SignCount:  count,
 		CreatedAt:  time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC),
 	}
@@ -57,15 +79,8 @@ func exportOpts(t *testing.T, vaultPath string, vaultPass, backupPass string, fo
 	t.Helper()
 	srcFD, srcClose := pipePassphrase(t, vaultPass)
 	newFD, newClose := pipePassphrase(t, backupPass)
-	return options{
-		vaultPath: vaultPath,
-		passFD:    srcFD,
-		newPassFD: newFD,
-		force:     force,
-	}, func() {
-		srcClose()
-		newClose()
-	}
+	opts := options{vaultPath: vaultPath, passFD: srcFD, newPassFD: newFD, force: force}
+	return opts, func() { srcClose(); newClose() }
 }
 
 func TestExportRefusesOverwriteWithoutForce(t *testing.T) {
@@ -229,16 +244,16 @@ func TestImportMergePrefersHigherCounter(t *testing.T) {
 		byUser[string(c.UserID)] = c
 	}
 	alice := byUser["alice"]
-	if alice.SignCount != 9 || string(alice.ID) != "backup-alice" {
-		t.Fatalf("alice = id %q count %d, want backup-alice / 9", alice.ID, alice.SignCount)
+	if alice.SignCount != 9 || !bytes.Equal(alice.ID, testCredID("backup-alice")) {
+		t.Fatalf("alice = id %x count %d, want backup-alice / 9", alice.ID, alice.SignCount)
 	}
 	bob := byUser["bob"]
-	if bob.SignCount != 8 || string(bob.ID) != "local-bob" {
-		t.Fatalf("bob = id %q count %d, want local-bob / 8 (higher local counter)", bob.ID, bob.SignCount)
+	if bob.SignCount != 8 || !bytes.Equal(bob.ID, testCredID("local-bob")) {
+		t.Fatalf("bob = id %x count %d, want local-bob / 8 (higher local counter)", bob.ID, bob.SignCount)
 	}
 	carol := byUser["carol"]
-	if carol.SignCount != 4 || string(carol.ID) != "local-carol" {
-		t.Fatalf("carol = id %q count %d, want local-carol / 4 (equal counter keeps current)", carol.ID, carol.SignCount)
+	if carol.SignCount != 4 || !bytes.Equal(carol.ID, testCredID("local-carol")) {
+		t.Fatalf("carol = id %x count %d, want local-carol / 4 (equal counter keeps current)", carol.ID, carol.SignCount)
 	}
 }
 
@@ -267,7 +282,7 @@ func TestImportMergeNonCollision(t *testing.T) {
 	for _, c := range got {
 		ids[string(c.ID)] = true
 	}
-	if !ids["local-alice"] || !ids["backup-bob"] {
+	if !ids[string(testCredID("local-alice"))] || !ids[string(testCredID("backup-bob"))] {
 		t.Fatalf("credentials = %v, want both local-alice and backup-bob", ids)
 	}
 }
@@ -308,8 +323,8 @@ func TestImportMergesThroughCommand(t *testing.T) {
 			alice = c
 		}
 	}
-	if alice.SignCount != 6 || string(alice.ID) != "backup-alice" {
-		t.Fatalf("alice = id %q count %d, want the imported higher-counter credential", alice.ID, alice.SignCount)
+	if alice.SignCount != 6 || !bytes.Equal(alice.ID, testCredID("backup-alice")) {
+		t.Fatalf("alice = id %x count %d, want the imported higher-counter credential", alice.ID, alice.SignCount)
 	}
 }
 
