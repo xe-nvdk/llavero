@@ -84,12 +84,11 @@ func runImport(opts options, src string) error {
 	if sameFile(src, opts.vaultPath) {
 		return errors.New("refusing to import a vault into itself")
 	}
-	// TODO: same best-effort race as -forget; see serviceHasOpen.
-	if serviceHasOpen(opts.vaultPath) {
-		return errors.New("the llavero service is running against this vault and holds its own\n" +
-			"       copy in memory, so its next write would overwrite anything imported here.\n" +
-			"       Stop it first:  systemctl --user stop llavero.service")
+	lock, err := lockForWrite(opts.vaultPath, "import")
+	if err != nil {
+		return err
 	}
+	defer lock.unlock()
 
 	_, statErr := os.Stat(opts.vaultPath)
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
@@ -197,7 +196,8 @@ var verifyExport = verifyPortableExport
 //
 //   - the source vault, by any path (symlink, hardlink, relative spelling);
 //   - the default vault, which is what the service runs against;
-//   - any file with a <dest>.tpm beside it, i.e. a TPM-bound vault.
+//   - any file with a <dest>.tpm beside it, i.e. a TPM-bound vault;
+//   - any vault a running llavero holds the lock on, whatever its path.
 //
 // An existing file is otherwise only replaced with -force.
 func checkExportDest(dest, source string, force bool) error {
@@ -208,6 +208,9 @@ func checkExportDest(dest, source string, force bool) error {
 		if sameFile(dest, live.path) || sameInode(dest, live.path) {
 			return fmt.Errorf("refusing to export onto %s (%s); pick a different path", live.path, live.what)
 		}
+	}
+	if vaultInUse(dest) {
+		return fmt.Errorf("refusing to export onto %s: a running llavero has it open; pick a different path", dest)
 	}
 	if _, err := os.Lstat(tpmBlobPath(dest)); err == nil {
 		return fmt.Errorf("refusing to export to %s: %s exists, so it is a TPM-bound vault; pick a different path",

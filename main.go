@@ -200,6 +200,12 @@ func runRekey(opts options) error {
 		}
 	}
 
+	lock, err := lockForWrite(opts.vaultPath, "rekey")
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
+
 	v, err := loadVault(opts)
 	if err != nil {
 		return err
@@ -285,6 +291,17 @@ func run(opts options) error {
 	if err := checkUHIDAccess(); err != nil {
 		return err
 	}
+
+	// Held until the process exits, so no offline writer can edit the vault
+	// underneath the copy this daemon keeps in memory.
+	lock, err := lockVault(opts.vaultPath)
+	if errors.Is(err, errVaultLocked) {
+		return fmt.Errorf("%s is already in use by another llavero process (is the service running?)", opts.vaultPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
 
 	v, err := loadVault(opts)
 	if err != nil {
@@ -624,12 +641,11 @@ func runList(opts options) error {
 // shows what it is about to remove and asks first: there is no undo, and a
 // deleted passkey may be the only way into an account.
 func runForget(opts options) error {
-	// TODO: best-effort only, racy against a service starting now; see serviceHasOpen.
-	if serviceHasOpen(opts.vaultPath) {
-		return errors.New("the llavero service is running against this vault and holds its own\n" +
-			"       copy in memory, so its next write would resurrect anything deleted here.\n" +
-			"       Stop it first:  systemctl --user stop llavero.service")
+	lock, err := lockForWrite(opts.vaultPath, "forget passkeys")
+	if err != nil {
+		return err
 	}
+	defer lock.unlock()
 
 	v, err := loadVault(opts)
 	if err != nil {
@@ -679,10 +695,8 @@ func runForget(opts options) error {
 // Editing a different file while the daemon runs is harmless, so the guard is
 // scoped to the path rather than refusing whenever the service happens to be up.
 //
-// TODO: this is a best-effort check, not a lock. A service started after it
-// returns (or one not run under systemd) still holds its own in-memory copy
-// and can overwrite what -forget or import just wrote. An flock on the vault,
-// taken by the service and by every offline writer, would close the race.
+// It is only used to word an error: the vault lock (lockVault) is what keeps
+// offline writers and the daemon apart.
 func serviceHasOpen(vaultPath string) bool {
 	out, err := exec.Command("systemctl", "--user", "is-active", "llavero.service").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "active" {
