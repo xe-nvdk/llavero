@@ -608,3 +608,38 @@ func TestImportSkipsSameIDWithDifferentKeyMaterial(t *testing.T) {
 		}
 	}
 }
+
+func TestImportRefusesNonPortableFiles(t *testing.T) {
+	dir := t.TempDir()
+	vaultPath := filepath.Join(dir, "vault.pkv")
+	seedPassphraseVault(t, vaultPath, []byte("vault-passphrase"), testStoredCred("example.test", "alice", 1, "cred-alice"))
+
+	// A TPM-bound vault header: magic, v2, mode, salt, nonce, then junk.
+	tpmFile := filepath.Join(dir, "tpm.pkv")
+	hdr := append([]byte(vaultMagic), vaultVersion2, byte(modeTPM))
+	hdr = append(hdr, make([]byte, saltLen+nonceLen+32)...)
+	if err := os.WriteFile(tpmFile, hdr, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notVault := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notVault, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Hardlink to the vault itself: path comparison alone misses it.
+	hardlink := filepath.Join(dir, "same.pkv")
+	if err := os.Link(vaultPath, hardlink); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ src, want string }{
+		{tpmFile, "not a portable backup"},
+		{notVault, "not a llavero vault"},
+		{hardlink, "into itself"},
+	} {
+		// No passphrase is supplied: the refusal must come before any prompt.
+		err := runImport(options{vaultPath: vaultPath, passFD: -1, newPassFD: -1}, tc.src)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("import %s: err = %v, want it to mention %q", filepath.Base(tc.src), err, tc.want)
+		}
+	}
+}

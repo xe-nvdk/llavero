@@ -81,8 +81,18 @@ func runImport(opts options, src string) error {
 	if err != nil {
 		return err
 	}
-	if sameFile(src, opts.vaultPath) {
+	if sameFile(src, opts.vaultPath) || sameInode(src, opts.vaultPath) {
 		return errors.New("refusing to import a vault into itself")
+	}
+	// Only a passphrase-only file is a portable backup. Anything else would
+	// send openVault to this machine's TPM for a blob sealed somewhere else.
+	// Checked before any passphrase is asked for.
+	mode, err := readVaultHeader(src)
+	if err != nil {
+		return fmt.Errorf("%s: %w", src, err)
+	}
+	if mode != modePassphrase {
+		return fmt.Errorf("%s is a %s vault, not a portable backup; create one with  llavero export FILE", src, mode)
 	}
 	lock, err := lockForWrite(opts.vaultPath, "import")
 	if err != nil {
