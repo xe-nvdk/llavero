@@ -1,4 +1,4 @@
-.TH LLAVERO 1 "September 2026" "llavero" "User Commands"
+.TH LLAVERO 1 2026-11-01 "llavero" "User Commands"
 .SH NAME
 llavero \- software FIDO2 authenticator for Linux
 .SH SYNOPSIS
@@ -97,7 +97,7 @@ Default: 5s.
 .B 0
 disables reuse.
 .TP
-.BI \-mlock
+.B \-mlock
 Lock process memory so decrypted keys cannot be written to swap.
 Default: on.
 Pass
@@ -201,6 +201,10 @@ Success, including a completed daemon shutdown after SIGINT or SIGTERM.
 The requested action failed (permissions, a locked vault, a refused
 .BR \-forget ,
 and so on).
+.TP
+.B 2
+A flag could not be parsed (unknown flag, missing or malformed value).
+Usage is printed to standard error.
 .SH ENVIRONMENT
 .TP
 .B XDG_DATA_HOME
