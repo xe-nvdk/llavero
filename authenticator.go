@@ -308,7 +308,7 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 		chosen = picker.items[idx].cred
 		// Choosing an account is itself the consent, so only verification is
 		// left to do.
-		if !a.verifyUserFor(req.RPID, fmt.Sprintf("Sign in to %s as %s", req.RPID, picker.items[idx].name)) {
+		if !a.verifyUserFor(req.RPID, fmt.Sprintf("Sign in to %s as %s", req.RPID, picker.items[idx].label)) {
 			return []byte{statusOperationDenied}
 		}
 	} else {
@@ -367,7 +367,8 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 		return []byte{statusOther}
 	}
 
-	a.logf("signed assertion for %s (%s), counter now %d", req.RPID, chosen.UserName, count)
+	a.logf("signed assertion for %s (%s, credential %s), counter now %d",
+		req.RPID, sanitizePickerField(chosen.UserName), credIDPrefix(chosen.ID), count)
 	return append([]byte{statusOK}, out...)
 }
 
@@ -503,9 +504,9 @@ func sanitizePickerField(s string) string {
 // row is the omarchy-menu-select three-field form (empty glyph, label,
 // subtext). key is what that picker returns for such a row — label\tsubtext —
 // which is unique because the credential-id prefix is in the subtext or, when
-// names collide, in the label. name is
-// the friendly display name, kept for logs and the UV reason so those still
-// read as "alice" rather than "alice · e2f02eed…".
+// names collide, in the label. The label is also what the fingerprint prompt
+// names, so two "alice" accounts are told apart there too. name is the raw
+// display name.
 type accountPickerItem struct {
 	cred    storedCredential
 	name    string

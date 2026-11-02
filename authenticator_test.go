@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -435,5 +436,22 @@ func TestAccountPickerMatchesCollidingRowWithoutDate(t *testing.T) {
 	}
 	if got := p.match(p.items[1].row); got != 1 {
 		t.Fatalf("row matched %d, want 1", got)
+	}
+}
+
+// The final log line must say which of two same-named accounts signed.
+func TestGetAssertionLogNamesCredential(t *testing.T) {
+	first := testCred(t, "aaaaaaaaaaaaaaaa", "example.test", "alice", time.Now().Add(-time.Hour))
+	second := testCred(t, "bbbbbbbbbbbbbbbb", "example.test", "alice", time.Now())
+	v := testVaultWith(t, first, second)
+	want := newAccountPicker([]storedCredential{second, first}).items[1]
+	var logs []string
+	a := &authenticator{
+		vault: v, approver: &scriptedApprover{reply: want.key},
+		logf: func(f string, args ...any) { logs = append(logs, fmt.Sprintf(f, args...)) },
+	}
+	decodeAssertion(t, a.getAssertion(encodeGetAssertion(t, "example.test")))
+	if len(logs) == 0 || !strings.Contains(logs[len(logs)-1], credIDPrefix(first.ID)) {
+		t.Fatalf("final log line does not name the credential: %q", logs)
 	}
 }
