@@ -17,8 +17,7 @@ _arguments -S \
 	'-uv-strict[deny when the fingerprint sensor is unusable]' \
 	'-consent[how to take consent]:method:($consent)' \
 	'-uv-grace[reuse a fingerprint scan for the same site]:duration:(0 5s 10s)' \
-	'-mlock[lock memory against swap (default true)]' \
-	'-mlock=false[do not lock memory]' \
+	'-mlock=-[lock memory against swap (default true)]::bool:(true false)' \
 	'-list[list stored passkeys, then exit]' \
 	'-forget[delete passkeys by site or credential id prefix]:site or prefix:' \
 	'-auto-approve[approve every request without prompting (testing only)]' \
