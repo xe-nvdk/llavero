@@ -165,9 +165,27 @@ Credentials are matched by credential id. One already present keeps its
 local key and takes the higher of the two signature counters. One with a new
 id is added, even when this vault already has a different passkey for the
 same site and account; the site decides which of the two it accepts, and the
-local one stays first in the sign-in picker. Stop the service
+local one stays first in the sign-in picker. Before writing, `import` copies
+the vault to `vault.pkv.bak-<timestamp>`, as `-rekey` does; an import that
+changes nothing writes nothing. Records in the backup that could never sign
+(no site, malformed id, unusable key) are skipped and listed. If the target
+vault does not exist yet, `import` creates it and says so. Stop the service
 before importing: the daemon holds its own copy in memory and its next write
 would overwrite the merge.
+
+Flags go before the command (`llavero -vault X import FILE`); anything after
+`FILE` is rejected. `-passphrase-fd` always unlocks the vault named by
+`-vault`. `-new-passphrase-fd` is the passphrase that will encrypt the
+backup for `export`, and the passphrase that unlocks the backup for
+`import`.
+
+> **A restored backup replaces the original authenticator; it must not run
+> alongside it.** A backup holds the same private keys, so two machines using
+> copies of one vault are two authenticators answering for the same
+> credentials. Their signature counters drift apart, and a site that checks
+> them can treat the lower one as a cloned key and lock the credential or
+> the account. Import a backup onto a machine only when the original is
+> gone or will not be used again, or `-forget` the shared passkeys on one side.
 
 Store the backup somewhere you would store a recovery code, and redo it after
 registering a passkey you care about. Verify it with:
@@ -188,6 +206,7 @@ llavero -vault ~/backup.pkv -list
 | `-uv fingerprint\|prompt` | user verification method |
 | `-uv-strict` | deny when the sensor is unusable, instead of falling back |
 | `-passphrase-fd N` | read the passphrase from a descriptor (`0` for stdin) |
+| `-new-passphrase-fd N` | the new passphrase for `-rekey` or `export`, or the backup's passphrase for `import` |
 | `-mlock` | lock memory against swap (default true, degrades with a warning) |
 | `-tpm-selftest` | seal and unseal a test secret, then exit |
 | `-auto-approve` | approve everything without prompting. Testing only |

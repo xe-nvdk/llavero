@@ -115,3 +115,21 @@ func TestParseCommand(t *testing.T) {
 		}
 	}
 }
+
+// Importing into a path with no vault creates one. That must be said
+// plainly, since a typo in -vault would otherwise look like a normal restore.
+func TestCLIImportReportsNewVault(t *testing.T) {
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup.pkv")
+	seedPassphraseVault(t, backup, []byte("backup-pass"), testStoredCred("other.test", "bob", 1, "bob"))
+	fresh := filepath.Join(dir, "fresh.pkv")
+
+	r := runCLI(t, dir, []string{"fresh-pass1", "backup-pass"},
+		"-vault", fresh, "-passphrase-fd", "3", "-new-passphrase-fd", "4", "import", backup)
+	if r.code != 0 {
+		t.Fatalf("import into a fresh vault failed:\n%s", r.out)
+	}
+	if !strings.Contains(r.out, "into a NEW vault at "+fresh) {
+		t.Fatalf("import did not report creating a new vault:\n%s", r.out)
+	}
+}

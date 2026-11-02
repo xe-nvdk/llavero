@@ -84,6 +84,7 @@ func runImport(opts options, src string) error {
 	if sameFile(src, opts.vaultPath) {
 		return errors.New("refusing to import a vault into itself")
 	}
+	// TODO: same best-effort race as -forget; see serviceHasOpen.
 	if serviceHasOpen(opts.vaultPath) {
 		return errors.New("the llavero service is running against this vault and holds its own\n" +
 			"       copy in memory, so its next write would overwrite anything imported here.\n" +
@@ -137,8 +138,12 @@ func runImport(opts options, src string) error {
 	for _, why := range res.Invalid {
 		logf("skipped invalid record in backup: %s", why)
 	}
-	logf("imported %s: %d added, %d counter(s) raised, %d unchanged, %d invalid skipped",
-		src, res.Added, res.Updated, res.Unchanged, len(res.Invalid))
+	target := opts.vaultPath
+	if isNew {
+		target = "a NEW vault at " + opts.vaultPath + " (no vault existed there)"
+	}
+	logf("imported %s into %s: %d added, %d counter(s) raised, %d unchanged, %d invalid skipped",
+		src, target, res.Added, res.Updated, res.Unchanged, len(res.Invalid))
 	return nil
 }
 

@@ -79,10 +79,12 @@ func main() {
 	flag.StringVar(&opts.forget, "forget", "", "delete passkeys matching a site or a credential id prefix, then exit")
 	flag.BoolVar(&opts.autoApprove, "auto-approve", false, "approve every request without prompting (testing only)")
 	flag.IntVar(&opts.passFD, "passphrase-fd", -1, "read the vault passphrase from this file descriptor")
-	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey or export, or the backup passphrase for import")
+	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read a second passphrase from this descriptor: the NEW one for -rekey, the one to encrypt the backup with for export, or the one that unlocks the backup FILE for import (-passphrase-fd is always the -vault passphrase)")
 	flag.BoolVar(&opts.force, "force", false, "let export replace an existing backup file (never a live or TPM-bound vault)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [export|import FILE]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [export|import FILE]\n"+
+			"Flags must come before export/import. A restored backup must replace the\n"+
+			"original authenticator, not run alongside it.\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -622,6 +624,7 @@ func runList(opts options) error {
 // shows what it is about to remove and asks first: there is no undo, and a
 // deleted passkey may be the only way into an account.
 func runForget(opts options) error {
+	// TODO: best-effort only, racy against a service starting now; see serviceHasOpen.
 	if serviceHasOpen(opts.vaultPath) {
 		return errors.New("the llavero service is running against this vault and holds its own\n" +
 			"       copy in memory, so its next write would resurrect anything deleted here.\n" +
@@ -675,6 +678,11 @@ func runForget(opts options) error {
 // serviceHasOpen reports whether the running service is using this very vault.
 // Editing a different file while the daemon runs is harmless, so the guard is
 // scoped to the path rather than refusing whenever the service happens to be up.
+//
+// TODO: this is a best-effort check, not a lock. A service started after it
+// returns (or one not run under systemd) still holds its own in-memory copy
+// and can overwrite what -forget or import just wrote. An flock on the vault,
+// taken by the service and by every offline writer, would close the race.
 func serviceHasOpen(vaultPath string) bool {
 	out, err := exec.Command("systemctl", "--user", "is-active", "llavero.service").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "active" {
