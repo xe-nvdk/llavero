@@ -62,6 +62,7 @@ func runCLI(t *testing.T, dataHome string, passphrases []string, args ...string)
 // default vault, and "export f -force" ran without -force.
 func TestCLIRejectsFlagsAfterCommand(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dir) // match the child, see runCLI
 	other := filepath.Join(dir, "other.pkv")
 	backup := filepath.Join(dir, "backup.pkv")
 	seedPassphraseVault(t, other, []byte("other-pass"), testStoredCred("example.test", "alice", 1, "alice"))
