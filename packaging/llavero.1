@@ -4,6 +4,16 @@ llavero \- software FIDO2 authenticator for Linux
 .SH SYNOPSIS
 .B llavero
 [\fIOPTION\fR]...
+.br
+.B llavero
+[\fIOPTION\fR]...
+.B export
+.I FILE
+.br
+.B llavero
+[\fIOPTION\fR]...
+.B import
+.I FILE
 .SH DESCRIPTION
 .B llavero
 is a software FIDO2 authenticator.
@@ -27,6 +37,53 @@ unlocks the vault and runs as the authenticator daemon.
 and
 .B \-version
 run their action and exit.
+.SH COMMANDS
+Options must come before the command; anything after
+.I FILE
+is rejected.
+.TP
+.BI export " FILE"
+Write a passphrase-only copy of the vault to
+.IR FILE ,
+asking for a new passphrase for the backup.
+The live vault is only read.
+The copy is written to a temporary file, reopened and checked, then renamed
+into place.
+The backup passphrase must be at least 8 characters, whether typed or read
+from
+.BR \-new-passphrase-fd .
+An existing
+.I FILE
+is replaced only with
+.BR \-force ,
+and never when it is the vault being exported, the default vault, a file
+with a
+.I .tpm
+blob next to it, or a vault a running llavero holds the lock on.
+.TP
+.BI import " FILE"
+Merge the passkeys in backup
+.I FILE
+into the vault.
+Only a passphrase-only file is accepted, checked before any passphrase is
+read.
+Credentials are matched by id: a known one keeps the higher signature
+counter, a new one is added.
+A local passkey is never removed or replaced.
+A record whose id is already stored with a different site, user or key is
+skipped as a conflict.
+Before writing, the vault is copied to
+.IR vault.pkv.bak-<timestamp> .
+Invalid records are skipped and reported.
+Stop
+.B llavero.service
+first; import refuses to run while any llavero process holds the vault lock
+(see
+.BR FILES ).
+.PP
+A restored backup must replace the original authenticator, not run alongside
+it: two copies of the same keys drift apart in their signature counters, which
+relying parties may treat as a cloned authenticator.
 .SH OPTIONS
 .TP
 .BI \-vault " PATH"
@@ -62,6 +119,7 @@ The original file is copied to a timestamped
 .B .bak-*
 backup first, and success is reported only after the rewritten vault reopens
 with the same credential count.
+Refuses to run while another llavero process holds the vault lock.
 .TP
 .BI \-uv " METHOD"
 User verification:
@@ -122,10 +180,9 @@ Print stored passkeys and exit.
 Delete passkeys matching a relying-party ID or a credential-id prefix, then
 exit.
 Shows what it will delete and asks you to type the same string back.
-Refuses to run while
-.B llavero.service
-has that same vault open, because the daemon holds its own copy in memory
-and its next write would resurrect anything deleted underneath it.
+Refuses to run while any llavero process holds the vault lock, because the
+daemon holds its own copy in memory and its next write would resurrect
+anything deleted underneath it.
 .TP
 .BI \-passphrase-fd " N"
 Read the vault passphrase from file descriptor
@@ -134,10 +191,20 @@ Read the vault passphrase from file descriptor
 for stdin).
 .TP
 .BI \-new-passphrase-fd " N"
-Read the new passphrase for
-.B \-rekey
-from file descriptor
-.IR N .
+Read a second passphrase from file descriptor
+.IR N :
+the new one for
+.BR \-rekey ,
+the one that encrypts the backup for
+.BR export ,
+or the one that unlocks the backup for
+.BR import .
+.TP
+.B \-force
+Let
+.B export
+replace an existing backup file.
+It never replaces a live or TPM-bound vault.
 .TP
 .B \-tpm-selftest
 Seal and unseal a test secret, confirm two seals differ, confirm a
@@ -161,6 +228,18 @@ Print flag defaults and exit.
 Default vault.
 The matching TPM blob, if any, is
 .IR vault.pkv.tpm .
+.TP
+.I $XDG_DATA_HOME/llavero/vault.pkv.lock
+Writer lock.
+The daemon holds an exclusive
+.BR flock (2)
+on it while it runs;
+.BR import ,
+.B \-forget
+and
+.B \-rekey
+take it while they work, and refuse if another process holds it.
+It is released when the process exits and holds no data.
 .TP
 .I /dev/uhid
 Kernel device used to register the virtual HID authenticator.

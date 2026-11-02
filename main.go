@@ -55,6 +55,7 @@ type options struct {
 	autoApprove bool
 	passFD      int
 	newPassFD   int
+	force       bool
 }
 
 func main() {
@@ -78,7 +79,14 @@ func main() {
 	flag.StringVar(&opts.forget, "forget", "", "delete passkeys matching a site or a credential id prefix, then exit")
 	flag.BoolVar(&opts.autoApprove, "auto-approve", false, "approve every request without prompting (testing only)")
 	flag.IntVar(&opts.passFD, "passphrase-fd", -1, "read the vault passphrase from this file descriptor")
-	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey from this file descriptor")
+	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read a second passphrase from this descriptor: the NEW one for -rekey, the one to encrypt the backup with for export, or the one that unlocks the backup FILE for import (-passphrase-fd is always the -vault passphrase)")
+	flag.BoolVar(&opts.force, "force", false, "let export replace an existing backup file (never a live or TPM-bound vault)")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [export|import FILE]\n"+
+			"Flags must come before export/import. A restored backup must replace the\n"+
+			"original authenticator, not run alongside it.\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	verbose = *verboseFlag
 
@@ -130,7 +138,7 @@ func loadVault(opts options) (*vault, error) {
 
 	var passphrase []byte
 	if mode.needsPassphrase() {
-		p, err := readPassphrase(opts.passFD, isNew, "")
+		p, err := readPassphrase(opts.passFD, isNew, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -155,6 +163,32 @@ func loadVault(opts options) (*vault, error) {
 	return v, nil
 }
 
+// parseCommand reads the positional arguments left after flag parsing: none,
+// or "export FILE" / "import FILE". Go's flag package stops at the first
+// non-flag argument, so anything after FILE would otherwise be ignored
+// without a word, including -vault and -force.
+func parseCommand(args []string) (cmd, file string, err error) {
+	if len(args) == 0 {
+		return "", "", nil
+	}
+	cmd = args[0]
+	if cmd != "export" && cmd != "import" {
+		return "", "", fmt.Errorf("unknown command %q (want export or import)", cmd)
+	}
+	switch {
+	case len(args) < 2 || strings.TrimSpace(args[1]) == "":
+		return "", "", fmt.Errorf("usage: llavero [flags] %s FILE", cmd)
+	case len(args) > 2:
+		extra := args[2]
+		if strings.HasPrefix(extra, "-") {
+			return "", "", fmt.Errorf("%q after the file name is not applied: flags must come before the command\n"+
+				"       e.g.  llavero [flags] %s FILE", extra, cmd)
+		}
+		return "", "", fmt.Errorf("%s takes exactly one FILE, got %q too", cmd, extra)
+	}
+	return cmd, args[1], nil
+}
+
 func runRekey(opts options) error {
 	newMode, err := parseUnlockMode(opts.rekeyTo)
 	if err != nil {
@@ -165,6 +199,12 @@ func runRekey(opts options) error {
 			return err
 		}
 	}
+
+	lock, err := lockForWrite(opts.vaultPath, "rekey")
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
 
 	v, err := loadVault(opts)
 	if err != nil {
@@ -177,15 +217,15 @@ func runRekey(opts options) error {
 
 	// Back up before touching anything. A failed rekey must never be the
 	// reason someone loses their passkeys.
-	backup := fmt.Sprintf("%s.bak-%s", opts.vaultPath, time.Now().Format("20060102-150405"))
-	if err := copyFile(opts.vaultPath, backup); err != nil {
+	backup, err := backupVaultFile(opts.vaultPath)
+	if err != nil {
 		return fmt.Errorf("could not back up the vault, refusing to rekey: %w", err)
 	}
 	logf("backed up the existing vault to %s", backup)
 
 	var newPass []byte
 	if newMode.needsPassphrase() {
-		p, err := readPassphrase(opts.newPassFD, true, "new ")
+		p, err := readPassphrase(opts.newPassFD, true, "new ", "")
 		if err != nil {
 			return err
 		}
@@ -219,6 +259,16 @@ func run(opts options) error {
 	// so there is no window in which a decrypted vault could escape.
 	hardenProcess(opts.mlock, logf)
 
+	// Parse the subcommand before anything else runs, so a misplaced flag is
+	// an error rather than a silent no-op on the wrong vault.
+	cmd, file, err := parseCommand(flag.Args())
+	if err != nil {
+		return err
+	}
+	if cmd != "" && (opts.rekeyTo != "" || opts.list || opts.forget != "") {
+		return fmt.Errorf("%s cannot be combined with -rekey, -list, or -forget", cmd)
+	}
+
 	if opts.rekeyTo != "" {
 		return runRekey(opts)
 	}
@@ -229,11 +279,29 @@ func run(opts options) error {
 		return runForget(opts)
 	}
 
+	switch cmd {
+	case "export":
+		return runExport(opts, file)
+	case "import":
+		return runImport(opts, file)
+	}
+
 	// Check device access before asking for a passphrase, so a permissions
 	// problem does not cost the user a typed secret first.
 	if err := checkUHIDAccess(); err != nil {
 		return err
 	}
+
+	// Held until the process exits, so no offline writer can edit the vault
+	// underneath the copy this daemon keeps in memory.
+	lock, err := lockVault(opts.vaultPath)
+	if errors.Is(err, errVaultLocked) {
+		return fmt.Errorf("%s is already in use by another llavero process (is the service running?)", opts.vaultPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer lock.unlock()
 
 	v, err := loadVault(opts)
 	if err != nil {
@@ -374,7 +442,11 @@ func checkUHIDAccess() error {
 	return fmt.Errorf("opening /dev/uhid: %w", err)
 }
 
-func readPassphrase(passFD int, confirm bool, adjective string) ([]byte, error) {
+const minPassphraseLen = 8
+
+var errPassphraseTooShort = fmt.Errorf("passphrase must be at least %d characters", minPassphraseLen)
+
+func readPassphrase(passFD int, confirm bool, adjective, prompt string) ([]byte, error) {
 	if passFD >= 0 {
 		f := os.NewFile(uintptr(passFD), "passphrase")
 		if f == nil {
@@ -404,9 +476,9 @@ func readPassphrase(passFD int, confirm bool, adjective string) ([]byte, error) 
 		if err != nil {
 			return nil, err
 		}
-		if len(first) < 8 {
+		if len(first) < minPassphraseLen {
 			zero(first)
-			return nil, errors.New("passphrase must be at least 8 characters")
+			return nil, errPassphraseTooShort
 		}
 		fmt.Print("Confirm passphrase: ")
 		second, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -424,7 +496,10 @@ func readPassphrase(passFD int, confirm bool, adjective string) ([]byte, error) 
 		return first, nil
 	}
 
-	fmt.Print("Vault passphrase: ")
+	if prompt == "" {
+		prompt = "Vault passphrase: "
+	}
+	fmt.Print(prompt)
 	pass, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	return pass, err
@@ -448,14 +523,6 @@ func readLine(f *os.File) ([]byte, error) {
 		}
 	}
 	return bytes.TrimRight(out, "\r"), nil
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0o600)
 }
 
 // zero overwrites secret material so it does not linger in the heap any longer
@@ -570,11 +637,11 @@ func runList(opts options) error {
 // shows what it is about to remove and asks first: there is no undo, and a
 // deleted passkey may be the only way into an account.
 func runForget(opts options) error {
-	if serviceHasOpen(opts.vaultPath) {
-		return errors.New("the llavero service is running against this vault and holds its own\n" +
-			"       copy in memory, so its next write would resurrect anything deleted here.\n" +
-			"       Stop it first:  systemctl --user stop llavero.service")
+	lock, err := lockForWrite(opts.vaultPath, "forget passkeys")
+	if err != nil {
+		return err
 	}
+	defer lock.unlock()
 
 	v, err := loadVault(opts)
 	if err != nil {
@@ -623,7 +690,12 @@ func runForget(opts options) error {
 // serviceHasOpen reports whether the running service is using this very vault.
 // Editing a different file while the daemon runs is harmless, so the guard is
 // scoped to the path rather than refusing whenever the service happens to be up.
-func serviceHasOpen(vaultPath string) bool {
+//
+// It is only used to word an error: the vault lock (lockVault) is what keeps
+// offline writers and the daemon apart.
+var serviceHasOpen = systemdServiceHasOpen
+
+func systemdServiceHasOpen(vaultPath string) bool {
 	out, err := exec.Command("systemctl", "--user", "is-active", "llavero.service").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "active" {
 		return false

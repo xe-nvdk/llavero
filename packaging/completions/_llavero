@@ -26,4 +26,7 @@ _arguments -S \
 	'-tpm-selftest[seal and unseal a test secret, then exit]' \
 	'-v[log every CTAPHID frame]' \
 	'-version[print version, commit hash and commit date, then exit]' \
-	'-h[print flag defaults and exit]'
+	'-force[let export replace an existing backup file]' \
+	'-h[print flag defaults and exit]' \
+	'1:command:((export\:"write a passphrase-only backup" import\:"merge a backup into the vault"))' \
+	'2:backup file:_files'

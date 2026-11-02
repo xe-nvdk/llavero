@@ -303,6 +303,169 @@ func createVault(path string, mode unlockMode, passphrase []byte) (*vault, error
 	return v, nil
 }
 
+// cloneCredential copies a stored credential so merge/export cannot alias
+// the caller's slices.
+func cloneCredential(c storedCredential) storedCredential {
+	out := c
+	out.ID = append([]byte(nil), c.ID...)
+	out.UserID = append([]byte(nil), c.UserID...)
+	out.PrivateKey = append([]byte(nil), c.PrivateKey...)
+	return out
+}
+
+func cloneContents(in vaultContents) vaultContents {
+	out := vaultContents{Credentials: make([]storedCredential, len(in.Credentials))}
+	for i, c := range in.Credentials {
+		out.Credentials[i] = cloneCredential(c)
+	}
+	return out
+}
+
+// snapshot copies every credential. Export uses it so the live vault is only
+// read, even while the service holds the same file open.
+func (v *vault) snapshot() vaultContents {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return cloneContents(v.contents)
+}
+
+// exportPortable writes a passphrase-only copy of this vault to dest. It
+// reuses rekey() for the crypto, on a clone so the source path, key, and
+// mode are left alone.
+func (v *vault) exportPortable(dest string, passphrase []byte) error {
+	clone := &vault{path: dest, contents: v.snapshot()}
+	return clone.rekey(modePassphrase, passphrase)
+}
+
+// mergeResult reports what an import did, per incoming credential.
+type mergeResult struct {
+	Added     int // credential id not present locally; stored
+	Updated   int // same id already present; its counter was raised
+	Unchanged int // same id already present with an equal or higher counter
+	// Invalid describes each incoming record that was skipped because it
+	// could never be used to sign: no rpId, a malformed id, or a bad key.
+	Invalid []string
+	// Conflicts describes each incoming record that shares an id with a
+	// credential already present (locally or earlier in the backup) but
+	// differs in site, user or key. That only happens through corruption or
+	// a crafted file; it is skipped and the stored credential is left alone.
+	Conflicts []string
+}
+
+// sameKeyMaterial reports whether two records with the same id describe the
+// same credential: same site, same user handle, same private key.
+func sameKeyMaterial(a, b storedCredential) bool {
+	return a.RPID == b.RPID && string(a.UserID) == string(b.UserID) &&
+		string(a.PrivateKey) == string(b.PrivateKey)
+}
+
+// validateImported checks that a record from outside this vault is usable.
+func validateImported(c storedCredential) error {
+	if c.RPID == "" {
+		return errors.New("empty rp_id")
+	}
+	if len(c.ID) != credentialIDLen {
+		return fmt.Errorf("credential id is %d bytes, want %d", len(c.ID), credentialIDLen)
+	}
+	if _, err := parsePrivateKey(c.PrivateKey); err != nil {
+		return fmt.Errorf("private key unusable: %v", err)
+	}
+	return nil
+}
+
+// mergeCredentials adds incoming passkeys without ever removing or replacing
+// a local one.
+//
+// Credentials are matched by id, the only thing that makes two records the
+// same key. Signature counters belong to one id and are not comparable
+// across ids: a freshly re-registered passkey starts at 0 and would lose any
+// "higher counter wins" contest against an old backup of the same account.
+//
+//   - Same id but a different site, user or key: a conflict. Skip it and
+//     report it; an id names exactly one key.
+//   - Same id: keep the local record and raise its counter to the larger of
+//     the two, so the next assertion never goes backwards.
+//   - New id, even for an (rpId, userId) already present: store it. Both keys
+//     may be registered with the relying party, which decides which it
+//     accepts. It is inserted just before the local key for that account so
+//     findForRP, which lists newest first, keeps offering the local one first.
+//
+// beforeWrite, if set, runs once before the vault file is rewritten, and an
+// error from it aborts the merge with nothing written. It is not called when
+// the merge changes nothing.
+func (v *vault) mergeCredentials(incoming []storedCredential, beforeWrite func() error) (mergeResult, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	var res mergeResult
+	orig := v.contents.Credentials
+	work := make([]storedCredential, len(orig))
+	copy(work, orig)
+	v.contents.Credentials = work
+	for n, inc := range incoming {
+		if err := validateImported(inc); err != nil {
+			label := inc.RPID
+			if label == "" {
+				label = "(no site)"
+			}
+			res.Invalid = append(res.Invalid, fmt.Sprintf("record %d, %s: %v", n+1, label, err))
+			continue
+		}
+		inc = cloneCredential(inc)
+		creds := v.contents.Credentials
+
+		existing, sameAccount := -1, -1
+		for i := range creds {
+			if string(creds[i].ID) == string(inc.ID) {
+				existing = i
+				break
+			}
+			if sameAccount < 0 && creds[i].RPID == inc.RPID && string(creds[i].UserID) == string(inc.UserID) {
+				sameAccount = i
+			}
+		}
+
+		switch {
+		case existing >= 0 && !sameKeyMaterial(creds[existing], inc):
+			res.Conflicts = append(res.Conflicts, fmt.Sprintf(
+				"record %d, %s: credential id %x is already stored for %s with different key material",
+				n+1, inc.RPID, inc.ID[:4], creds[existing].RPID))
+		case existing >= 0:
+			if inc.SignCount > creds[existing].SignCount {
+				creds[existing].SignCount = inc.SignCount
+				res.Updated++
+			} else {
+				res.Unchanged++
+			}
+		case sameAccount >= 0:
+			out := make([]storedCredential, 0, len(creds)+1)
+			out = append(out, creds[:sameAccount]...)
+			out = append(out, inc)
+			out = append(out, creds[sameAccount:]...)
+			v.contents.Credentials = out
+			res.Added++
+		default:
+			v.contents.Credentials = append(creds, inc)
+			res.Added++
+		}
+	}
+	if res.Added == 0 && res.Updated == 0 {
+		v.contents.Credentials = orig
+		return res, nil
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			v.contents.Credentials = orig
+			return mergeResult{}, err
+		}
+	}
+	if err := v.save(); err != nil {
+		v.contents.Credentials = orig
+		return mergeResult{}, err
+	}
+	return res, nil
+}
+
 // rekey rewrites an already-open vault under a new mode, preserving every
 // credential. The caller is responsible for having backed up the old file.
 func (v *vault) rekey(mode unlockMode, passphrase []byte) error {
@@ -406,7 +569,13 @@ func (v *vault) save() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), v.path)
+	if err := os.Rename(tmp.Name(), v.path); err != nil {
+		return err
+	}
+	// The rename is only durable once the directory entry is on disk, so
+	// without this a crash could roll the vault back to before this write.
+	syncDir(filepath.Dir(v.path))
+	return nil
 }
 
 // addCredential mints a keypair for a new registration and persists it.
@@ -441,17 +610,20 @@ func (v *vault) addCredential(rp rpEntity, user userEntity) (*storedCredential, 
 
 	// One passkey per (rpId, userId). Re-registering the same account replaces
 	// the old key rather than accumulating credentials the RP will never ask
-	// for again.
-	replaced := false
+	// for again. Import is the exception: it may hold a second key for an
+	// account (see mergeCredentials). Then the newest one, the last in the
+	// slice, is replaced, so the key just minted is the one findForRP offers
+	// first.
+	last := -1
 	for i := range v.contents.Credentials {
 		c := &v.contents.Credentials[i]
 		if c.RPID == rp.ID && string(c.UserID) == string(user.ID) {
-			v.contents.Credentials[i] = cred
-			replaced = true
-			break
+			last = i
 		}
 	}
-	if !replaced {
+	if last >= 0 {
+		v.contents.Credentials[last] = cred
+	} else {
 		v.contents.Credentials = append(v.contents.Credentials, cred)
 	}
 

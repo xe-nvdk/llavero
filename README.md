@@ -130,6 +130,8 @@ llavero -rekey tpm
 llavero -list                    # what is stored
 llavero -forget dash.example.com # delete by site
 llavero -forget 02fe624b         # or by credential id prefix
+llavero export ~/backup.pkv      # passphrase-backed portable copy
+llavero import ~/backup.pkv      # merge a backup into this vault
 ```
 
 `-forget` shows what it will delete and asks you to type the site name back.
@@ -143,25 +145,64 @@ TPM binding means a copy of `vault.pkv` plus `vault.pkv.tpm` only works on the
 machine that sealed it. That is the point, but it also means those files are
 not a recovery plan: lose the board and they decrypt to nothing.
 
-To make a copy that opens anywhere with a passphrase, rekey a duplicate rather
-than the live vault:
+`llavero export` writes a copy that opens anywhere with a passphrase. It
+unlocks the live vault (TPM-bound or not), re-encrypts the credentials under
+the passphrase you choose (at least 8 characters, typed or from
+`-new-passphrase-fd`), and writes no `.tpm` blob or `.bak-*` file. The copy
+is written under a temporary name, reopened and compared record by record
+with the vault, and only then renamed into place. The live vault is not
+written, so this works while the service is running.
+
+An existing destination is only replaced with `-force`, and never when it is
+the vault being exported, the default vault, a file with a `.tpm` blob
+beside it, or a vault that a running llavero has open.
 
 ```sh
-cp ~/.local/share/llavero/vault.pkv     /tmp/portable.pkv
-cp ~/.local/share/llavero/vault.pkv.tpm /tmp/portable.pkv.tpm
-llavero -vault /tmp/portable.pkv -rekey passphrase
-rm /tmp/portable.pkv.tpm /tmp/portable.pkv.bak-*
+llavero export ~/backup.pkv          # refuses to overwrite without -force
+llavero import ~/backup.pkv          # merge into the current vault
 ```
 
-Both files must be copied: the rekey has to unseal the original secret before
-it can re-encrypt under a passphrase. The result holds every credential and is
-independent of this machine. The live vault is untouched.
+`import` only adds: it never removes or replaces a local passkey.
+Credentials are matched by credential id. One already present keeps its
+local key and takes the higher of the two signature counters. One with a new
+id is added, even when this vault already has a different passkey for the
+same site and account; the site decides which of the two it accepts, and the
+local one stays first in the sign-in picker. Before writing, `import` copies
+the vault to `vault.pkv.bak-<timestamp>`, as `-rekey` does; an import that
+changes nothing writes nothing. Records in the backup that could never sign
+(no site, malformed id, unusable key) are skipped and listed, and so is any
+record whose id is already stored with a different site, user or key, which
+only corruption or a crafted file produces. Only a passphrase-only file is
+accepted as a backup, and that is checked before any passphrase is asked
+for. If the target vault does not exist yet, `import` creates it and says so.
 
-Store it somewhere you would store a recovery code, and redo it after
+Stop the service before importing. The daemon holds its own copy of the
+vault in memory and rewrites the file on every sign-in, so it would overwrite
+the merge. Every process that writes a vault holds an exclusive lock on
+`vault.pkv.lock` beside it: the daemon for as long as it runs, `import`,
+`-forget` and `-rekey` while they work. Whichever comes second refuses
+instead of racing. The lock is released when the process exits, however it
+exits; the empty `.lock` file stays and is harmless.
+
+Flags go before the command (`llavero -vault X import FILE`); anything after
+`FILE` is rejected. `-passphrase-fd` always unlocks the vault named by
+`-vault`. `-new-passphrase-fd` is the passphrase that will encrypt the
+backup for `export`, and the passphrase that unlocks the backup for
+`import`.
+
+> **A restored backup replaces the original authenticator; it must not run
+> alongside it.** A backup holds the same private keys, so two machines using
+> copies of one vault are two authenticators answering for the same
+> credentials. Their signature counters drift apart, and a site that checks
+> them can treat the lower one as a cloned key and lock the credential or
+> the account. Import a backup onto a machine only when the original is
+> gone or will not be used again, or `-forget` the shared passkeys on one side.
+
+Store the backup somewhere you would store a recovery code, and redo it after
 registering a passkey you care about. Verify it with:
 
 ```sh
-llavero -vault /tmp/portable.pkv -list
+llavero -vault ~/backup.pkv -list
 ```
 
 ### Flags
@@ -172,9 +213,11 @@ llavero -vault /tmp/portable.pkv -list
 | `-vault PATH` | vault file location |
 | `-unlock MODE` | unlock mode for a **new** vault |
 | `-rekey MODE` | re-encrypt an existing vault, then exit |
+| `-force` | let `export` replace an existing backup file (never a live or TPM-bound vault) |
 | `-uv fingerprint\|prompt` | user verification method |
 | `-uv-strict` | deny when the sensor is unusable, instead of falling back |
 | `-passphrase-fd N` | read the passphrase from a descriptor (`0` for stdin) |
+| `-new-passphrase-fd N` | the new passphrase for `-rekey` or `export`, or the backup's passphrase for `import` |
 | `-mlock` | lock memory against swap (default true, degrades with a warning) |
 | `-tpm-selftest` | seal and unseal a test secret, then exit |
 | `-auto-approve` | approve everything without prompting. Testing only |
