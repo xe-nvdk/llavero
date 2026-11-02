@@ -4,6 +4,16 @@ llavero \- software FIDO2 authenticator for Linux
 .SH SYNOPSIS
 .B llavero
 [\fIOPTION\fR]...
+.br
+.B llavero
+[\fIOPTION\fR]...
+.B export
+.I FILE
+.br
+.B llavero
+[\fIOPTION\fR]...
+.B import
+.I FILE
 .SH DESCRIPTION
 .B llavero
 is a software FIDO2 authenticator.
@@ -27,6 +37,44 @@ unlocks the vault and runs as the authenticator daemon.
 and
 .B \-version
 run their action and exit.
+.SH COMMANDS
+Options must come before the command; anything after
+.I FILE
+is rejected.
+.TP
+.BI export " FILE"
+Write a passphrase-only copy of the vault to
+.IR FILE ,
+asking for a new passphrase for the backup.
+The live vault is only read.
+The copy is written to a temporary file, reopened and checked, then renamed
+into place.
+An existing
+.I FILE
+is replaced only with
+.BR \-force ,
+and never when it is the vault being exported, the default vault, or a file
+with a
+.I .tpm
+blob next to it.
+.TP
+.BI import " FILE"
+Merge the passkeys in backup
+.I FILE
+into the vault.
+Credentials are matched by id: a known one keeps the higher signature
+counter, a new one is added.
+A local passkey is never removed or replaced.
+Before writing, the vault is copied to
+.IR vault.pkv.bak-<timestamp> .
+Invalid records are skipped and reported.
+Stop
+.B llavero.service
+first; import refuses to run while it has the same vault open.
+.PP
+A restored backup must replace the original authenticator, not run alongside
+it: two copies of the same keys drift apart in their signature counters, which
+relying parties may treat as a cloned authenticator.
 .SH OPTIONS
 .TP
 .BI \-vault " PATH"
@@ -134,10 +182,20 @@ Read the vault passphrase from file descriptor
 for stdin).
 .TP
 .BI \-new-passphrase-fd " N"
-Read the new passphrase for
-.B \-rekey
-from file descriptor
-.IR N .
+Read a second passphrase from file descriptor
+.IR N :
+the new one for
+.BR \-rekey ,
+the one that encrypts the backup for
+.BR export ,
+or the one that unlocks the backup for
+.BR import .
+.TP
+.B \-force
+Let
+.B export
+replace an existing backup file.
+It never replaces a live or TPM-bound vault.
 .TP
 .B \-tpm-selftest
 Seal and unseal a test secret, confirm two seals differ, confirm a

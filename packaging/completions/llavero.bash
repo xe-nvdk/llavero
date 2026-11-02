@@ -40,12 +40,17 @@ _llavero() {
 	-forget)
 		return
 		;;
+	export|import)
+		mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+		return
+		;;
 	esac
 
 	# -mlock defaults to true; the useful completion is turning it off.
 	local opts="-vault -unlock -rekey -uv -uv-strict -consent -uv-grace
 		-mlock -mlock=false -list -forget -auto-approve
-		-passphrase-fd -new-passphrase-fd -tpm-selftest -v -version -h"
+		-passphrase-fd -new-passphrase-fd -tpm-selftest -force -v -version -h
+		export import"
 
 	mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
