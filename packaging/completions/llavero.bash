@@ -14,27 +14,27 @@ _llavero() {
 
 	case "$prev" in
 	-vault)
-		COMPREPLY=($(compgen -f -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -f -- "$cur")
 		return
 		;;
 	-unlock|-rekey)
-		COMPREPLY=($(compgen -W "$modes" -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -W "$modes" -- "$cur")
 		return
 		;;
 	-uv)
-		COMPREPLY=($(compgen -W "$uv" -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -W "$uv" -- "$cur")
 		return
 		;;
 	-consent)
-		COMPREPLY=($(compgen -W "$consent" -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -W "$consent" -- "$cur")
 		return
 		;;
 	-uv-grace)
-		COMPREPLY=($(compgen -W "0 5s 10s" -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -W "0 5s 10s" -- "$cur")
 		return
 		;;
 	-passphrase-fd|-new-passphrase-fd)
-		COMPREPLY=($(compgen -W "0" -- "$cur"))
+		mapfile -t COMPREPLY < <(compgen -W "0" -- "$cur")
 		return
 		;;
 	-forget)
@@ -47,7 +47,7 @@ _llavero() {
 		-mlock -mlock=false -list -forget -auto-approve
 		-passphrase-fd -new-passphrase-fd -tpm-selftest -v -h"
 
-	COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+	mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
 
 complete -F _llavero llavero
