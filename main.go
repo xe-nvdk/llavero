@@ -442,6 +442,10 @@ func checkUHIDAccess() error {
 	return fmt.Errorf("opening /dev/uhid: %w", err)
 }
 
+const minPassphraseLen = 8
+
+var errPassphraseTooShort = fmt.Errorf("passphrase must be at least %d characters", minPassphraseLen)
+
 func readPassphrase(passFD int, confirm bool, adjective, prompt string) ([]byte, error) {
 	if passFD >= 0 {
 		f := os.NewFile(uintptr(passFD), "passphrase")
@@ -472,9 +476,9 @@ func readPassphrase(passFD int, confirm bool, adjective, prompt string) ([]byte,
 		if err != nil {
 			return nil, err
 		}
-		if len(first) < 8 {
+		if len(first) < minPassphraseLen {
 			zero(first)
-			return nil, errors.New("passphrase must be at least 8 characters")
+			return nil, errPassphraseTooShort
 		}
 		fmt.Print("Confirm passphrase: ")
 		second, err := term.ReadPassword(int(os.Stdin.Fd()))

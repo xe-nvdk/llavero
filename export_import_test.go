@@ -720,3 +720,22 @@ func TestBackupVaultFileNeverOverwrites(t *testing.T) {
 		}
 	}
 }
+
+func TestExportRejectsShortPassphraseFromFD(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "vault.pkv")
+	dest := filepath.Join(dir, "backup.pkv")
+	seedPassphraseVault(t, src, []byte("source-passphrase"), testStoredCred("example.test", "alice", 1, "cred-alice"))
+
+	for _, short := range []string{"", "1234567"} {
+		opts, closeFDs := exportOpts(t, src, "source-passphrase", short, false)
+		err := runExport(opts, dest)
+		closeFDs()
+		if !errors.Is(err, errPassphraseTooShort) {
+			t.Errorf("export with backup passphrase %q: err = %v, want errPassphraseTooShort", short, err)
+		}
+		if _, statErr := os.Stat(dest); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("a refused export still wrote %s", dest)
+		}
+	}
+}

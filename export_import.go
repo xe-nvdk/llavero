@@ -38,6 +38,12 @@ func runExport(opts options, dest string) error {
 		return err
 	}
 	defer zero(newPass)
+	// The terminal prompt already enforces this; a passphrase from a file
+	// descriptor does not, and a backup is the one copy of the vault that an
+	// attacker can take away and guess at offline.
+	if len(newPass) < minPassphraseLen {
+		return fmt.Errorf("backup %w", errPassphraseTooShort)
+	}
 
 	// Write and verify under a temporary name in dest's directory, then
 	// rename over dest. Until the rename, an existing dest is untouched, and
