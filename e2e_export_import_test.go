@@ -138,6 +138,21 @@ func TestE2EExportImportRoundTrip(t *testing.T) {
 	mustFail(cli([]string{freshPass, freshPass}, append(append([]string{"-vault", fresh}, pfd...), "import", fresh)...),
 		"into itself")
 
+	// A daemon running on fresh, as another process: every writer refuses,
+	// and export will not land on it even with -force.
+	daemon, err := lockVault(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustFail(cli([]string{freshPass, bakPass}, append(append([]string{"-vault", fresh}, pfd...), "import", backup)...),
+		"refusing to import")
+	mustFail(cli([]string{freshPass}, "-vault", fresh, "-passphrase-fd", "3", "-forget", "example.test"),
+		"refusing to forget")
+	mustFail(cli([]string{freshPass, "another-pass1"}, append(append([]string{"-vault", fresh}, pfd...), "-rekey", "passphrase")...),
+		"refusing to rekey")
+	mustFail(exp(fresh, "-force"), "running llavero has it open")
+	daemon.unlock()
+
 	for p, b := range snap {
 		if got, _ := os.ReadFile(p); !bytes.Equal(got, b) {
 			t.Fatalf("%s changed during the misuse cases", p)
