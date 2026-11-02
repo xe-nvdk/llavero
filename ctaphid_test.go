@@ -1,5 +1,10 @@
 package main
 
+// These tests pin the transport's current, deliberately lenient behaviour: it
+// never answers ERR_CHANNEL_BUSY, ERR_MSG_TIMEOUT or ERR_INVALID_CHANNEL, and
+// it does not insist on BCNT=8 for CTAPHID_INIT. Tightening any of those is
+// fine, but expect to update the tests that rely on it.
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -294,11 +299,11 @@ func TestCTAPHIDBCNTTooLarge(t *testing.T) {
 	}
 
 	// The spec maximum itself is legal; it must not be rejected as invalid.
-	max := make([]byte, packetSize)
-	binary.BigEndian.PutUint32(max[0:4], testCID)
-	max[4] = cmdPing | 0x80
-	binary.BigEndian.PutUint16(max[5:7], 7609)
-	h.handlePacket(max)
+	limit := make([]byte, packetSize)
+	binary.BigEndian.PutUint32(limit[0:4], testCID)
+	limit[4] = cmdPing | 0x80
+	binary.BigEndian.PutUint16(limit[5:7], 7609)
+	h.handlePacket(limit)
 	if got := rec.take(); len(got) != 0 {
 		t.Fatalf("BCNT=7609 wrote %d packet(s); the message is incomplete, not illegal", len(got))
 	}
@@ -443,9 +448,9 @@ func TestCTAPHIDRuntPacketDoesNotPanic(t *testing.T) {
 
 	// Five bytes is the minimum header and must not be treated as a runt.
 	// After padding it is an idle continuation (seq 0 on an unused channel).
-	min := make([]byte, 5)
-	binary.BigEndian.PutUint32(min[0:4], testCID)
-	h.handlePacket(min)
+	minimal := make([]byte, 5)
+	binary.BigEndian.PutUint32(minimal[0:4], testCID)
+	h.handlePacket(minimal)
 	if got := rec.take(); len(got) != 0 {
 		t.Fatalf("5-byte continuation wrote %d packet(s)", len(got))
 	}
