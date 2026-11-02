@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // scriptedApprover returns a prepared reply and records what it was asked.
@@ -331,5 +332,48 @@ func TestGetAssertionAutoApprovePicksNewestWhenNamesCollide(t *testing.T) {
 	resp := decodeAssertion(t, a.getAssertion(encodeGetAssertion(t, "example.test")))
 	if !bytes.Equal(resp.Credential.ID, second.ID) {
 		t.Fatalf("auto-approve signed %x, want the newest alice %x", resp.Credential.ID, second.ID)
+	}
+}
+
+func TestTruncateIsRuneSafe(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"alice", 10, "alice"},
+		{"alice", 5, "alice"},
+		{"alice", 4, "ali\u2026"},
+		{"ñññññ", 3, "ññ\u2026"},
+		{"名前名前", 2, "名\u2026"},
+		{"名前", 1, "名"},
+		{"alice", 0, ""},
+	}
+	for _, c := range cases {
+		got := truncate(c.in, c.n)
+		if got != c.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("truncate(%q, %d) produced invalid UTF-8 %q", c.in, c.n, got)
+		}
+	}
+}
+
+// A long name is cut before the id prefix is added, so two colliding long
+// names still show their distinguishing prefix.
+func TestAccountPickerTruncatesLongNamesKeepingPrefix(t *testing.T) {
+	long := strings.Repeat("é", 200)
+	a := storedCredential{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: long}
+	b := storedCredential{ID: []byte("bbbbbbbbbbbbbbbb"), UserName: long}
+	p := newAccountPicker([]storedCredential{a, b})
+	for i, c := range []storedCredential{a, b} {
+		label := p.items[i].label
+		if !strings.HasSuffix(label, " · "+credIDPrefix(c.ID)) {
+			t.Errorf("label %q lost its id prefix", label)
+		}
+		if n := utf8.RuneCountInString(label); n > maxPickerNameRunes+3+16 {
+			t.Errorf("label has %d runes, want at most %d", n, maxPickerNameRunes+3+16)
+		}
 	}
 }

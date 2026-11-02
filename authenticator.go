@@ -514,6 +514,9 @@ type accountPickerItem struct {
 	key     string
 }
 
+// maxPickerNameRunes bounds the account name shown in the picker.
+const maxPickerNameRunes = 40
+
 type accountPicker struct {
 	items []accountPickerItem
 }
@@ -530,7 +533,9 @@ func newAccountPicker(matches []storedCredential) accountPicker {
 	for i, c := range matches {
 		id := credIDPrefix(c.ID)
 		name := names[i]
-		label := sanitizePickerField(name)
+		// Cap the name before the id prefix is appended, so a long
+		// site-supplied name can never push the disambiguator off screen.
+		label := truncate(sanitizePickerField(name), maxPickerNameRunes)
 		if label == "" {
 			label = "this account"
 		}
