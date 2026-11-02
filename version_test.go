@@ -61,6 +61,27 @@ func TestApplyBuildInfoMarksDirtyAndIgnoresDevel(t *testing.T) {
 	}
 }
 
+// A dirty local build on Go 1.24+ gets +dirty on the module version and
+// vcs.modified=true. The line should say dirty once, on the commit.
+func TestApplyBuildInfoSaysDirtyOnce(t *testing.T) {
+	info := &debug.BuildInfo{
+		Main: debug.Module{Version: "v0.0.0-20260917121223-05aa67b1c2d3+dirty"},
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "05aa67b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7"},
+			{Key: "vcs.time", Value: "2026-09-17T12:12:23Z"},
+			{Key: "vcs.modified", Value: "true"},
+		},
+	}
+	got := formatVersion(applyBuildInfo("dev", "none", "unknown", info))
+	want := "llavero v0.0.0-20260917121223-05aa67b1c2d3 (05aa67b-dirty, 2026-09-17)"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if n := strings.Count(got, "dirty"); n != 1 {
+		t.Fatalf("%q mentions dirty %d times, want once", got, n)
+	}
+}
+
 func TestApplyBuildInfoDoesNotOverrideLdflags(t *testing.T) {
 	info := &debug.BuildInfo{
 		Main: debug.Module{Version: "v9.9.9"},
@@ -101,6 +122,10 @@ func TestParsePseudoVersion(t *testing.T) {
 	}{
 		{"v0.0.0-20260917121223-230caa9abcde", "230caa9", "2026-09-17", true},
 		{"v0.1.1-0.20260917121223-230caa9abcde", "230caa9", "2026-09-17", true},
+		{"v0.0.0-20260917121223-230caa9abcde+dirty", "230caa9", "2026-09-17", true},
+		{"v2.0.1-0.20260917121223-230caa9abcde+incompatible", "230caa9", "2026-09-17", true},
+		{"v2.0.1-0.20260917121223-230caa9abcde+incompatible.dirty", "230caa9", "2026-09-17", true},
+		{"v0.1.0+dirty", "", "", false},
 		{"v0.1.0", "", "", false},
 		{"dev", "", "", false},
 		{"v0.1.0-rc.1", "", "", false},

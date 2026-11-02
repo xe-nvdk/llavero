@@ -71,15 +71,20 @@ func applyBuildInfo(version, commit, commitDate string, info *debug.BuildInfo) (
 		commit = shortRev(rev)
 		if modified {
 			commit += "-dirty"
+			// Go 1.24+ also appends +dirty to the stamped module version.
+			// Say it once, on the commit, where it describes the tree.
+			version = strings.TrimSuffix(version, "+dirty")
 		}
 	}
 	if isDefault(commitDate, "unknown") && vcsTime != "" {
 		commitDate = formatVCSTime(vcsTime)
 	}
 
-	// go install from a module proxy usually has a version (often a
-	// pseudo-version) but no vcs.* settings. Pull commit and commit date out of
-	// the pseudo-version so those builds are not "none" / "unknown".
+	// go install from a module proxy has a version (often a pseudo-version)
+	// but no vcs.* settings. Pull commit and commit date out of the
+	// pseudo-version so those builds are not "none" / "unknown". Keep this
+	// fallback: once the module path is github.com/xe-nvdk/llavero,
+	// `go install github.com/xe-nvdk/llavero@<ref>` is exactly this case.
 	if pseudoCommit, pseudoDate, ok := parsePseudoVersion(version); ok {
 		if isDefault(commit, "none") {
 			commit = pseudoCommit
@@ -112,8 +117,9 @@ func formatVCSTime(vcsTime string) string {
 
 // parsePseudoVersion recognises the go-install form
 // vX.Y.Z-yyyymmddhhmmss-<12 hex> (and the -0.yyyymmddhhmmss- variant).
+// Build metadata such as +incompatible or +dirty is ignored.
 func parsePseudoVersion(v string) (commit, commitDate string, ok bool) {
-	v = strings.TrimSuffix(v, "+incompatible")
+	v, _, _ = strings.Cut(v, "+")
 	revSep := strings.LastIndexByte(v, '-')
 	if revSep < 0 || len(v)-revSep-1 != 12 || !isLowerHex(v[revSep+1:]) {
 		return "", "", false
