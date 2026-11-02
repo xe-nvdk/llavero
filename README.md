@@ -58,6 +58,16 @@ reboot fixes it. The udev rule takes effect immediately because ACLs are
 evaluated by UID at `open()` time, and it is narrower than the group: it is
 scoped to the active seat session rather than every process you run.
 
+If you joined the group anyway and still get `no access to /dev/tpmrm0`, check
+when the user manager started:
+
+```sh
+ps -o lstart= -p "$(pgrep -u "$USER" -x systemd)"
+```
+
+A start time from before your `usermod` means it is still running with the old
+groups, and so is every service it launched.
+
 Then install the binary where the user unit looks for it
 (`~/.local/bin/llavero`):
 
@@ -86,6 +96,16 @@ systemctl --user enable --now llavero.service
 No udev rule is needed for the HID node itself. Arch already ships
 `60-fido-id.rules`, which recognises the FIDO usage page in our report
 descriptor, tags the node `uaccess`, and grants the logged-in user an ACL.
+If a browser never offers the key, check that udev tagged the node as a
+security token. The daemon logs the node at startup as
+`presenting as /dev/hidrawN`:
+
+```sh
+udevadm info -q property -n /dev/hidrawN | grep ID_SECURITY_TOKEN
+```
+
+No `ID_SECURITY_TOKEN=1` means `60-fido-id.rules` did not match, so the node
+gets no `uaccess` ACL and the browser cannot open it.
 
 ### Unlock modes
 
