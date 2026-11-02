@@ -19,4 +19,5 @@ complete -c llavero -o passphrase-fd -x -a "0" -d "Read the vault passphrase fro
 complete -c llavero -o new-passphrase-fd -x -a "0" -d "Read the new passphrase for -rekey from this fd"
 complete -c llavero -o tpm-selftest -d "Seal and unseal a test secret, then exit"
 complete -c llavero -o v -d "Log every CTAPHID frame"
+complete -c llavero -o version -d "Print version, commit hash and commit date, then exit"
 complete -c llavero -o h -d "Print flag defaults and exit"
