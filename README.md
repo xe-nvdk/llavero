@@ -147,13 +147,15 @@ not a recovery plan: lose the board and they decrypt to nothing.
 
 `llavero export` writes a copy that opens anywhere with a passphrase. It
 unlocks the live vault (TPM-bound or not), re-encrypts the credentials under
-the passphrase you choose, reopens the result before reporting success, and
-writes no `.tpm` blob or `.bak-*` file. The live vault is not written, so
-this works while the service is running.
+the passphrase you choose (at least 8 characters, typed or from
+`-new-passphrase-fd`), and writes no `.tpm` blob or `.bak-*` file. The copy
+is written under a temporary name, reopened and compared record by record
+with the vault, and only then renamed into place. The live vault is not
+written, so this works while the service is running.
 
 An existing destination is only replaced with `-force`, and never when it is
-the vault being exported, the default vault, or a file with a `.tpm` blob
-beside it.
+the vault being exported, the default vault, a file with a `.tpm` blob
+beside it, or a vault that a running llavero has open.
 
 ```sh
 llavero export ~/backup.pkv          # refuses to overwrite without -force
@@ -168,10 +170,19 @@ same site and account; the site decides which of the two it accepts, and the
 local one stays first in the sign-in picker. Before writing, `import` copies
 the vault to `vault.pkv.bak-<timestamp>`, as `-rekey` does; an import that
 changes nothing writes nothing. Records in the backup that could never sign
-(no site, malformed id, unusable key) are skipped and listed. If the target
-vault does not exist yet, `import` creates it and says so. Stop the service
-before importing: the daemon holds its own copy in memory and its next write
-would overwrite the merge.
+(no site, malformed id, unusable key) are skipped and listed, and so is any
+record whose id is already stored with a different site, user or key, which
+only corruption or a crafted file produces. Only a passphrase-only file is
+accepted as a backup, and that is checked before any passphrase is asked
+for. If the target vault does not exist yet, `import` creates it and says so.
+
+Stop the service before importing. The daemon holds its own copy of the
+vault in memory and rewrites the file on every sign-in, so it would overwrite
+the merge. Every process that writes a vault holds an exclusive lock on
+`vault.pkv.lock` beside it: the daemon for as long as it runs, `import`,
+`-forget` and `-rekey` while they work. Whichever comes second refuses
+instead of racing. The lock is released when the process exits, however it
+exits; the empty `.lock` file stays and is harmless.
 
 Flags go before the command (`llavero -vault X import FILE`); anything after
 `FILE` is rejected. `-passphrase-fd` always unlocks the vault named by
