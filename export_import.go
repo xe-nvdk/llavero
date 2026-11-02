@@ -137,12 +137,15 @@ func runImport(opts options, src string) error {
 	for _, why := range res.Invalid {
 		logf("skipped invalid record in backup: %s", why)
 	}
+	for _, why := range res.Conflicts {
+		logf("skipped conflicting record in backup: %s", why)
+	}
 	target := opts.vaultPath
 	if isNew {
 		target = "a NEW vault at " + opts.vaultPath + " (no vault existed there)"
 	}
-	logf("imported %s into %s: %d added, %d counter(s) raised, %d unchanged, %d invalid skipped",
-		src, target, res.Added, res.Updated, res.Unchanged, len(res.Invalid))
+	logf("imported %s into %s: %d added, %d counter(s) raised, %d unchanged, %d invalid skipped, %d conflicting skipped",
+		src, target, res.Added, res.Updated, res.Unchanged, len(res.Invalid), len(res.Conflicts))
 	return nil
 }
 

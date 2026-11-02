@@ -345,6 +345,18 @@ type mergeResult struct {
 	// Invalid describes each incoming record that was skipped because it
 	// could never be used to sign: no rpId, a malformed id, or a bad key.
 	Invalid []string
+	// Conflicts describes each incoming record that shares an id with a
+	// credential already present (locally or earlier in the backup) but
+	// differs in site, user or key. That only happens through corruption or
+	// a crafted file; it is skipped and the stored credential is left alone.
+	Conflicts []string
+}
+
+// sameKeyMaterial reports whether two records with the same id describe the
+// same credential: same site, same user handle, same private key.
+func sameKeyMaterial(a, b storedCredential) bool {
+	return a.RPID == b.RPID && string(a.UserID) == string(b.UserID) &&
+		string(a.PrivateKey) == string(b.PrivateKey)
 }
 
 // validateImported checks that a record from outside this vault is usable.
@@ -369,6 +381,8 @@ func validateImported(c storedCredential) error {
 // across ids: a freshly re-registered passkey starts at 0 and would lose any
 // "higher counter wins" contest against an old backup of the same account.
 //
+//   - Same id but a different site, user or key: a conflict. Skip it and
+//     report it; an id names exactly one key.
 //   - Same id: keep the local record and raise its counter to the larger of
 //     the two, so the next assertion never goes backwards.
 //   - New id, even for an (rpId, userId) already present: store it. Both keys
@@ -412,6 +426,10 @@ func (v *vault) mergeCredentials(incoming []storedCredential, beforeWrite func()
 		}
 
 		switch {
+		case existing >= 0 && !sameKeyMaterial(creds[existing], inc):
+			res.Conflicts = append(res.Conflicts, fmt.Sprintf(
+				"record %d, %s: credential id %x is already stored for %s with different key material",
+				n+1, inc.RPID, inc.ID[:4], creds[existing].RPID))
 		case existing >= 0:
 			if inc.SignCount > creds[existing].SignCount {
 				creds[existing].SignCount = inc.SignCount

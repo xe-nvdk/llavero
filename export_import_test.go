@@ -396,8 +396,7 @@ func TestImportSameIDTakesMaxCounter(t *testing.T) {
 	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"), a, b)
 
 	aBackup := cloneCredential(a)
-	aBackup.SignCount = 9
-	aBackup.PrivateKey = testStoredCred("x", "x", 0, "x").PrivateKey
+	aBackup.SignCount = 9 // the same key, used more since this backup was taken
 	bBackup := cloneCredential(b)
 	bBackup.SignCount = 1
 
@@ -565,5 +564,47 @@ func TestReRegisterAfterImportPrefersNewKey(t *testing.T) {
 	}
 	if !bytes.Equal(m[0].ID, fresh.ID) {
 		t.Fatal("the just-registered key is not the one a discoverable sign-in picks")
+	}
+}
+
+func TestImportSkipsSameIDWithDifferentKeyMaterial(t *testing.T) {
+	local := testStoredCred("example.test", "alice", 5, "cred-alice")
+	v := &vault{path: filepath.Join(t.TempDir(), "vault.pkv"), key: make([]byte, 32), salt: make([]byte, saltLen)}
+	v.contents.Credentials = []storedCredential{cloneCredential(local)}
+
+	otherKey := testStoredCred("example.test", "alice", 99, "cred-alice") // same id, fresh key
+	otherSite := cloneCredential(local)
+	otherSite.RPID, otherSite.SignCount = "evil.test", 99
+	otherUser := cloneCredential(local)
+	otherUser.UserID, otherUser.SignCount = []byte("mallory"), 99
+	// Two records sharing an id inside the backup itself: the second conflicts
+	// with the first once that one has been added.
+	newA := testStoredCred("new.test", "bob", 1, "cred-bob")
+	newB := testStoredCred("new.test", "bob", 50, "cred-bob")
+
+	res, err := v.mergeCredentials([]storedCredential{otherKey, otherSite, otherUser, newA, newB}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Conflicts) != 4 || res.Added != 1 || res.Updated != 0 {
+		t.Fatalf("result = %+v, want 4 conflicts, 1 added, 0 updated", res)
+	}
+	got := v.list()
+	if len(got) != 2 {
+		t.Fatalf("vault holds %d credentials, want 2", len(got))
+	}
+	for _, c := range got {
+		switch c.RPID {
+		case "example.test":
+			if !sameKeyMaterial(c, local) || c.SignCount != 5 {
+				t.Fatalf("local credential was altered by a conflicting record: count %d", c.SignCount)
+			}
+		case "new.test":
+			if !sameKeyMaterial(c, newA) || c.SignCount != 1 {
+				t.Fatalf("first backup record was altered by a later conflicting one: count %d", c.SignCount)
+			}
+		default:
+			t.Fatalf("unexpected credential for %s", c.RPID)
+		}
 	}
 }
