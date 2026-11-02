@@ -8,7 +8,9 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -553,4 +555,39 @@ func TestCTAPHIDCBORReassembly(t *testing.T) {
 	if reply.cmd != cmdCBOR || !bytes.Equal(reply.payload, []byte{0x00, 0xA0}) {
 		t.Fatalf("CBOR reply cmd=0x%02x payload=%x", reply.cmd, reply.payload)
 	}
+}
+
+func TestCTAPHIDReplyAtMaxMessageSize(t *testing.T) {
+	payload := patterned(maxMessageSize)
+	h, rec := newTestHID(t, func([]byte) []byte { return payload })
+	var logs []string
+	h.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	feed(h, hostFrames(testCID, cmdCBOR, []byte{0x04})...)
+
+	frames := withoutKeepalives(rec.take())
+	if len(frames) != 1+128 {
+		t.Fatalf("wrote %d packets, want 129 (init + continuations 0..127)", len(frames))
+	}
+	reply := collectReply(t, frames)
+	if reply.cmd != cmdCBOR || !bytes.Equal(reply.payload, payload) {
+		t.Fatalf("cmd=0x%02x, %d bytes: want the full %d-byte CBOR reply", reply.cmd, len(reply.payload), maxMessageSize)
+	}
+	for _, l := range logs {
+		if strings.Contains(l, "exceeds") || strings.Contains(l, "too long") {
+			t.Errorf("spurious size complaint for a legal reply: %q", l)
+		}
+	}
+}
+
+func TestCTAPHIDReplyOverMaxMessageSize(t *testing.T) {
+	h, rec := newTestHID(t, func([]byte) []byte { return patterned(maxMessageSize + 1) })
+	feed(h, hostFrames(testCID, cmdCBOR, []byte{0x04})...)
+
+	// Exactly one error frame: no truncated CBOR message whose BCNT promises
+	// bytes that never arrive.
+	frames := withoutKeepalives(rec.take())
+	if len(frames) != 1 {
+		t.Fatalf("wrote %d packets, want a single error frame", len(frames))
+	}
+	expectError(t, frames, testCID, errOther)
 }

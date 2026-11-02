@@ -19,6 +19,10 @@ const (
 	initDataLen = packetSize - 7 // 57
 	contDataLen = packetSize - 5 // 59
 
+	// Largest message CTAPHID can frame: an init packet plus continuations
+	// numbered 0..127.
+	maxMessageSize = initDataLen + 128*contDataLen // 7609
+
 	broadcastCID = 0xFFFFFFFF
 
 	cmdPing      = 0x01
@@ -109,7 +113,7 @@ func (c *ctapHID) handlePacket(p []byte) {
 			delete(c.pending, cid)
 			return
 		}
-		if bcnt > 7609 { // spec maximum message size
+		if bcnt > maxMessageSize {
 			c.sendError(cid, errInvalidLen)
 			return
 		}
@@ -241,8 +245,15 @@ func (c *ctapHID) sendError(cid uint32, code byte) {
 }
 
 // sendMessage fragments a payload back to the host across as many packets as
-// it takes.
+// it takes. A payload too large to frame is never partially sent: the host
+// would wait for bytes that never come, so it gets ERR_OTHER instead.
 func (c *ctapHID) sendMessage(cid uint32, cmd byte, payload []byte) {
+	if len(payload) > maxMessageSize {
+		c.logf("reply of %d bytes on %08x exceeds the %d-byte CTAPHID maximum", len(payload), cid, maxMessageSize)
+		c.sendError(cid, errOther)
+		return
+	}
+
 	pkt := make([]byte, packetSize)
 	binary.BigEndian.PutUint32(pkt[0:4], cid)
 	pkt[4] = cmd | 0x80
@@ -259,6 +270,7 @@ func (c *ctapHID) sendMessage(cid uint32, cmd byte, payload []byte) {
 	}
 	sent := n
 
+	// The size check above keeps continuation sequence numbers within 0..0x7F.
 	var seq byte
 	for sent < len(payload) {
 		cont := make([]byte, packetSize)
@@ -275,10 +287,6 @@ func (c *ctapHID) sendMessage(cid uint32, cmd byte, payload []byte) {
 		}
 		sent += n
 		seq++
-		if seq > 0x7F {
-			c.logf("message too long to fragment")
-			return
-		}
 	}
 }
 
