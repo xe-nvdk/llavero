@@ -222,7 +222,7 @@ func (a *authenticator) makeCredential(body []byte) []byte {
 		return []byte{statusCredentialExcluded}
 	}
 
-	label := displayName(req.User)
+	label := sanitizePickerField(displayName(req.User))
 	title := fmt.Sprintf("Create a passkey for %s?", req.RP.ID)
 	if label != "" {
 		title = fmt.Sprintf("Create a passkey for %s as %s?", req.RP.ID, label)
@@ -311,7 +311,7 @@ func (a *authenticator) getAssertion(body []byte) []byte {
 			return []byte{statusOperationDenied}
 		}
 	} else {
-		label := displayName(userEntity{Name: chosen.UserName, DisplayName: chosen.UserDisplay})
+		label := sanitizePickerField(displayName(userEntity{Name: chosen.UserName, DisplayName: chosen.UserDisplay}))
 		title := fmt.Sprintf("Sign in to %s?", req.RPID)
 		if label != "" {
 			title = fmt.Sprintf("Sign in to %s as %s?", req.RPID, label)
@@ -474,11 +474,27 @@ func credIDPrefix(id []byte) string {
 	return fmt.Sprintf("%x", id[:n])
 }
 
+// sanitizePickerField makes site-supplied text safe to put in a prompt. The
+// name and display name come from the relying party, so they can carry
+// anything: a NUL makes exec of the picker fail (denying every sign-in to
+// that site), a tab or newline breaks the row format, and bidi overrides or
+// zero-width characters let two different accounts render identically.
+// Whitespace becomes a single space; other control, format (Cf) and
+// non-printable runes are dropped.
 func sanitizePickerField(s string) string {
-	s = strings.ReplaceAll(s, "\t", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	return strings.TrimSpace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r):
+			b.WriteRune(' ')
+		case unicode.Is(unicode.Cf, r), !unicode.IsPrint(r):
+			// dropped
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // accountPickerItem is one row in the multi-account sign-in menu.

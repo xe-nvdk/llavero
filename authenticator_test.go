@@ -229,6 +229,38 @@ func TestSanitizePickerFieldStripsTabs(t *testing.T) {
 	}
 }
 
+func TestSanitizePickerFieldDropsControlAndFormatRunes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"ali\x00ce", "alice"},                    // NUL would make exec fail
+		{"\x1b[31malice", "[31malice"},            // ESC and other C0 controls
+		{"alice\x7f\u0085", "alice"},              // DEL, C1 control (NEL)
+		{"\u202Eecila", "ecila"},                  // RIGHT-TO-LEFT OVERRIDE
+		{"al\u200Bice", "alice"},                  // ZERO WIDTH SPACE
+		{"\u2066alice\u2069\uFEFF", "alice"},      // isolates, BOM
+		{"alice\u00a0\u00a0smith", "alice smith"}, // NBSP folds to one space
+		{"  alice  \r\n ", "alice"},
+		{"Zoë 名前", "Zoë 名前"},
+	}
+	for _, c := range cases {
+		if got := sanitizePickerField(c.in); got != c.want {
+			t.Errorf("sanitizePickerField(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A NUL in a site-supplied name must not reach exec.
+func TestAccountPickerSanitizesHostileNames(t *testing.T) {
+	p := newAccountPicker([]storedCredential{
+		{ID: []byte("aaaaaaaaaaaaaaaa"), UserName: "ali\x00ce"},
+		{ID: []byte("bbbbbbbbbbbbbbbb"), UserName: "al\u200Bi\u202Ece"},
+	})
+	for _, it := range p.items {
+		if strings.ContainsAny(it.row, "\x00\u200B\u202E\n") {
+			t.Fatalf("row %q still carries control or format runes", it.row)
+		}
+	}
+}
+
 // The full getAssertion path must sign with the credential the picker
 // identified, not the first one that happens to share its username.
 func TestGetAssertionDuplicateNamesSelectsChosenCredential(t *testing.T) {
