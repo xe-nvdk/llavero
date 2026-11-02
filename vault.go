@@ -569,7 +569,13 @@ func (v *vault) save() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), v.path)
+	if err := os.Rename(tmp.Name(), v.path); err != nil {
+		return err
+	}
+	// The rename is only durable once the directory entry is on disk, so
+	// without this a crash could roll the vault back to before this write.
+	syncDir(filepath.Dir(v.path))
+	return nil
 }
 
 // addCredential mints a keypair for a new registration and persists it.
