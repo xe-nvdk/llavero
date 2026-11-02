@@ -148,8 +148,12 @@ not a recovery plan: lose the board and they decrypt to nothing.
 `llavero export` writes a copy that opens anywhere with a passphrase. It
 unlocks the live vault (TPM-bound or not), re-encrypts the credentials under
 the passphrase you choose, reopens the result before reporting success, and
-leaves no `.tpm` blob or `.bak-*` next to the file. The live vault is not
-written, so this works while the service is running.
+writes no `.tpm` blob or `.bak-*` file. The live vault is not written, so
+this works while the service is running.
+
+An existing destination is only replaced with `-force`, and never when it is
+the vault being exported, the default vault, or a file with a `.tpm` blob
+beside it.
 
 ```sh
 llavero export ~/backup.pkv          # refuses to overwrite without -force
@@ -180,7 +184,7 @@ llavero -vault ~/backup.pkv -list
 | `-vault PATH` | vault file location |
 | `-unlock MODE` | unlock mode for a **new** vault |
 | `-rekey MODE` | re-encrypt an existing vault, then exit |
-| `-force` | overwrite the `export` destination if it already exists |
+| `-force` | let `export` replace an existing backup file (never a live or TPM-bound vault) |
 | `-uv fingerprint\|prompt` | user verification method |
 | `-uv-strict` | deny when the sensor is unusable, instead of falling back |
 | `-passphrase-fd N` | read the passphrase from a descriptor (`0` for stdin) |

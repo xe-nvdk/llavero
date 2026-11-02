@@ -171,50 +171,97 @@ func TestExportVerifiesBeforeSuccess(t *testing.T) {
 	}
 }
 
-func TestExportLeavesNoTpmOrBak(t *testing.T) {
+// Files next to the destination belong to the user. Export must not delete
+// a .bak-* it did not write, and a <dest>.tpm means dest is (or was) a
+// TPM-bound vault, which no flag may overwrite.
+func TestExportLeavesUserSiblingsAlone(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "vault.pkv")
 	dest := filepath.Join(dir, "backup.pkv")
 	srcPass := "source-passphrase"
 	seedPassphraseVault(t, src, []byte(srcPass), testStoredCred("example.test", "alice", 1, "cred-alice"))
 
-	// Plant the leftovers the old copy-then-rekey workaround used to leave.
-	if err := os.WriteFile(tpmBlobPath(dest), []byte("sealed-blob"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	staleBak := dest + ".bak-20200101-000000"
-	if err := os.WriteFile(staleBak, []byte("old-backup"), 0o600); err != nil {
+	userBak := dest + ".bak-20200101-000000"
+	if err := os.WriteFile(userBak, []byte("old-backup"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dest, []byte("stale-export"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	opts, closeFDs := exportOpts(t, src, srcPass, "backup-passphrase", true)
 	defer closeFDs()
 	if err := runExport(opts, dest); err != nil {
 		t.Fatal(err)
 	}
-
+	if got, err := os.ReadFile(userBak); err != nil || string(got) != "old-backup" {
+		t.Fatalf("export removed or changed %s: %v", userBak, err)
+	}
 	if _, err := os.Stat(tpmBlobPath(dest)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("export left a TPM blob at %s", tpmBlobPath(dest))
 	}
-	if _, err := os.Stat(staleBak); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("export left %s", staleBak)
-	}
-	matches, err := filepath.Glob(filepath.Join(dir, "*.bak-*"))
-	if err != nil {
+}
+
+func TestExportRefusesTpmBoundDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "vault.pkv")
+	dest := filepath.Join(dir, "other.pkv")
+	srcPass := "source-passphrase"
+	seedPassphraseVault(t, src, []byte(srcPass), testStoredCred("example.test", "alice", 1, "cred-alice"))
+	if err := os.WriteFile(dest, []byte("other-vault"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 0 {
-		t.Fatalf("export left stray bak files: %v", matches)
-	}
-	matches, err = filepath.Glob(filepath.Join(dir, "*.tpm"))
-	if err != nil {
+	if err := os.WriteFile(tpmBlobPath(dest), []byte("sealed-blob"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 0 {
-		t.Fatalf("export left stray tpm files: %v", matches)
+
+	opts, closeFDs := exportOpts(t, src, srcPass, "backup-passphrase", true)
+	defer closeFDs()
+	if err := runExport(opts, dest); err == nil {
+		t.Fatal("export -force overwrote a destination that has a sealed TPM blob")
+	}
+	if got, _ := os.ReadFile(dest); string(got) != "other-vault" {
+		t.Fatal("destination was modified")
+	}
+	if got, _ := os.ReadFile(tpmBlobPath(dest)); string(got) != "sealed-blob" {
+		t.Fatal("sealed blob was removed or modified")
+	}
+}
+
+// -force must never reach the default vault (what the service uses) or the
+// source vault, whatever path spelling reaches it.
+func TestExportRefusesLiveVaultsEvenWithForce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dir)
+	live := defaultVaultPath()
+	seedPassphraseVault(t, live, []byte("live-pass"), testStoredCred("example.test", "alice", 1, "live-alice"))
+	liveBefore, _ := os.ReadFile(live)
+
+	src := filepath.Join(dir, "second.pkv")
+	seedPassphraseVault(t, src, []byte("second-pass"), testStoredCred("other.test", "bob", 1, "second-bob"))
+	srcBefore, _ := os.ReadFile(src)
+
+	hardlink := filepath.Join(dir, "hardlink.pkv")
+	if err := os.Link(src, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(dir, "symlink.pkv")
+	if err := os.Symlink(live, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, dest := range []string{live, symlink, src, hardlink} {
+		opts, closeFDs := exportOpts(t, src, "second-pass", "backup-passphrase", true)
+		err := runExport(opts, dest)
+		closeFDs()
+		if err == nil {
+			t.Fatalf("export -force onto %s succeeded", dest)
+		}
+	}
+	if got, _ := os.ReadFile(live); !bytes.Equal(got, liveBefore) {
+		t.Fatal("the default vault was overwritten")
+	}
+	if got, _ := os.ReadFile(src); !bytes.Equal(got, srcBefore) {
+		t.Fatal("the source vault was overwritten")
 	}
 }
 

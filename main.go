@@ -80,7 +80,7 @@ func main() {
 	flag.BoolVar(&opts.autoApprove, "auto-approve", false, "approve every request without prompting (testing only)")
 	flag.IntVar(&opts.passFD, "passphrase-fd", -1, "read the vault passphrase from this file descriptor")
 	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey or export, or the backup passphrase for import")
-	flag.BoolVar(&opts.force, "force", false, "overwrite the export destination if it already exists")
+	flag.BoolVar(&opts.force, "force", false, "let export replace an existing backup file (never a live or TPM-bound vault)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [export|import FILE]\n", os.Args[0])
 		flag.PrintDefaults()

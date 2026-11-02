@@ -18,15 +18,10 @@ func runExport(opts options, dest string) error {
 	if err != nil {
 		return err
 	}
-	if sameFile(dest, opts.vaultPath) {
-		return errors.New("refusing to export onto the live vault; pick a different path")
-	}
 	if _, err := os.Stat(opts.vaultPath); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("vault %s does not exist", opts.vaultPath)
 	}
-	if _, err := os.Stat(dest); err == nil && !opts.force {
-		return fmt.Errorf("%s: %w", dest, errExportExists)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := checkExportDest(dest, opts.vaultPath, opts.force); err != nil {
 		return err
 	}
 
@@ -43,14 +38,11 @@ func runExport(opts options, dest string) error {
 	defer zero(newPass)
 
 	if err := v.exportPortable(dest, newPass); err != nil {
-		cleanupExportSiblings(dest)
 		return fmt.Errorf("export failed: %w", err)
 	}
-	cleanupExportSiblings(dest)
 
-	if err := verifyPortableExport(dest, newPass, want); err != nil {
+	if err := verifyExport(dest, newPass, want); err != nil {
 		_ = os.Remove(dest)
-		cleanupExportSiblings(dest)
 		return err
 	}
 	logf("exported %d passkey(s) to %s", len(want), dest)
@@ -164,17 +156,65 @@ func verifyPortableExport(dest string, passphrase []byte, want []storedCredentia
 	return nil
 }
 
-// cleanupExportSiblings removes the leftovers the old copy-then-rekey
-// workaround left behind: a sealed blob and timestamped .bak-* files.
-func cleanupExportSiblings(dest string) {
-	_ = os.Remove(tpmBlobPath(dest))
-	matches, err := filepath.Glob(dest + ".bak-*")
+// verifyExport is verifyPortableExport, swappable so tests can make it fail.
+var verifyExport = verifyPortableExport
+
+// checkExportDest refuses destinations that are, or look like, a vault in
+// use. Some of these hold even with -force, because overwriting them would
+// destroy passkeys rather than a stale backup:
+//
+//   - the source vault, by any path (symlink, hardlink, relative spelling);
+//   - the default vault, which is what the service runs against;
+//   - any file with a <dest>.tpm beside it, i.e. a TPM-bound vault.
+//
+// An existing file is otherwise only replaced with -force.
+func checkExportDest(dest, source string, force bool) error {
+	for _, live := range []struct{ path, what string }{
+		{source, "the live vault being exported"},
+		{defaultVaultPath(), "the default vault (the one the service uses)"},
+	} {
+		if sameFile(dest, live.path) || sameInode(dest, live.path) {
+			return fmt.Errorf("refusing to export onto %s (%s); pick a different path", live.path, live.what)
+		}
+	}
+	if _, err := os.Lstat(tpmBlobPath(dest)); err == nil {
+		return fmt.Errorf("refusing to export to %s: %s exists, so it is a TPM-bound vault; pick a different path",
+			dest, tpmBlobPath(dest))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	fi, err := os.Stat(dest)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
-	for _, m := range matches {
-		_ = os.Remove(m)
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to export to %s: not a regular file", dest)
 	}
+	if !force {
+		if _, herr := readVaultHeader(dest); herr == nil {
+			return fmt.Errorf("%s is a llavero vault: %w", dest, errExportExists)
+		}
+		return fmt.Errorf("%s: %w", dest, errExportExists)
+	}
+	return nil
+}
+
+// sameInode reports whether two existing paths are the same file, which also
+// catches hardlinks that path comparison misses.
+func sameInode(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
 }
 
 // backupVaultFile copies the vault to <vault>.bak-<timestamp>. It never
