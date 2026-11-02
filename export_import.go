@@ -37,14 +37,38 @@ func runExport(opts options, dest string) error {
 	}
 	defer zero(newPass)
 
-	if err := v.exportPortable(dest, newPass); err != nil {
+	// Write and verify under a temporary name in dest's directory, then
+	// rename over dest. Until the rename, an existing dest is untouched, and
+	// on any failure only the temporary file is removed.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".llavero-export-*.pkv")
+	if err != nil {
 		return fmt.Errorf("export failed: %w", err)
 	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-	if err := verifyExport(dest, newPass, want); err != nil {
-		_ = os.Remove(dest)
+	if err := v.exportPortable(tmpPath, newPass); err != nil {
+		return fmt.Errorf("export failed: %w", err)
+	}
+	if err := verifyExport(tmpPath, newPass, want); err != nil {
 		return err
 	}
+	// Re-check right before replacing anything, in case dest changed while
+	// the passphrase was being typed.
+	if err := checkExportDest(dest, opts.vaultPath, opts.force); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return fmt.Errorf("export failed: %w", err)
+	}
+	committed = true
+	syncDir(filepath.Dir(dest))
 	logf("exported %d passkey(s) to %s", len(want), dest)
 	logf("verified: the backup reopens under the new passphrase and is not TPM-bound")
 	return nil
@@ -255,4 +279,13 @@ func backupVaultFile(vaultPath string) (string, error) {
 		return name, nil
 	}
 	return "", fmt.Errorf("too many backups named %s*", base)
+}
+
+// syncDir makes a rename durable. Failure is not fatal: the file is already
+// in place, and some filesystems do not support syncing a directory.
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 }

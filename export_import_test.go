@@ -475,3 +475,40 @@ func TestImportBacksUpVaultFirst(t *testing.T) {
 		t.Fatalf("a no-op re-import wrote another backup: %v", baks2)
 	}
 }
+
+// A failed export must leave the previous backup exactly as it was: the new
+// file is written and verified under a temporary name, and only renamed over
+// dest once it has proved itself.
+func TestExportFailureKeepsPreviousBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "vault.pkv")
+	dest := filepath.Join(dir, "backup.pkv")
+	seedPassphraseVault(t, src, []byte("source-passphrase"), testStoredCred("example.test", "alice", 1, "cred-alice"))
+	seedPassphraseVault(t, dest, []byte("old-backup-pass"), testStoredCred("example.test", "alice", 0, "cred-alice"))
+	before, _ := os.ReadFile(dest)
+
+	orig := verifyExport
+	verifyExport = func(string, []byte, []storedCredential) error { return errors.New("simulated verify failure") }
+	defer func() { verifyExport = orig }()
+
+	opts, closeFDs := exportOpts(t, src, "source-passphrase", "backup-passphrase", true)
+	defer closeFDs()
+	if err := runExport(opts, dest); err == nil {
+		t.Fatal("export reported success after a failed verify")
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("previous backup is gone: %v", err)
+	}
+	if !bytes.Equal(got, before) {
+		t.Fatal("previous backup was replaced by an unverified export")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("leftover files after failed export: %v", names)
+	}
+}
