@@ -278,7 +278,7 @@ func TestImportMergeNonCollision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (mergeResult{Added: 1}) {
+	if res.Added != 1 || res.Updated != 0 || res.Unchanged != 0 || len(res.Invalid) != 0 {
 		t.Fatalf("merge stats %+v, want 1 added", res)
 	}
 
@@ -364,7 +364,7 @@ func TestImportNeverDisplacesLocalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (mergeResult{Added: 1}) {
+	if res.Added != 1 || res.Updated != 0 || res.Unchanged != 0 || len(res.Invalid) != 0 {
 		t.Fatalf("merge stats %+v, want 1 added", res)
 	}
 
@@ -405,7 +405,7 @@ func TestImportSameIDTakesMaxCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res != (mergeResult{Updated: 1, Unchanged: 1}) {
+	if res.Added != 0 || res.Updated != 1 || res.Unchanged != 1 || len(res.Invalid) != 0 {
 		t.Fatalf("merge stats %+v, want 1 updated, 1 unchanged", res)
 	}
 	got := current.list()
@@ -510,5 +510,37 @@ func TestExportFailureKeepsPreviousBackup(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("leftover files after failed export: %v", names)
+	}
+}
+
+// A backup is input from outside this vault. Records that could never sign
+// (no rpId, wrong id length, unparseable key) are skipped, not stored.
+func TestImportSkipsInvalidRecords(t *testing.T) {
+	dir := t.TempDir()
+	current := seedPassphraseVault(t, filepath.Join(dir, "vault.pkv"), []byte("current-pass"),
+		testStoredCred("example.test", "alice", 1, "local-alice"))
+
+	good := testStoredCred("other.test", "bob", 1, "good")
+	noRP := testStoredCred("", "carol", 1, "no-rp")
+	shortID := testStoredCred("other.test", "dave", 1, "short-id")
+	shortID.ID = shortID.ID[:16]
+	badKey := testStoredCred("other.test", "erin", 1, "bad-key")
+	badKey.PrivateKey = []byte("not a pkcs8 key")
+
+	res, err := current.mergeCredentials([]storedCredential{noRP, good, shortID, badKey}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 1 || len(res.Invalid) != 3 {
+		t.Fatalf("merge stats %+v, want 1 added, 3 invalid", res)
+	}
+	got := current.list()
+	if len(got) != 2 {
+		t.Fatalf("count = %d, want 2 (local + the one valid record)", len(got))
+	}
+	for _, c := range got {
+		if !bytes.Equal(c.ID, testCredID("local-alice")) && !bytes.Equal(c.ID, good.ID) {
+			t.Fatalf("invalid record %x was stored", c.ID)
+		}
 	}
 }

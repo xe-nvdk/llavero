@@ -342,6 +342,23 @@ type mergeResult struct {
 	Added     int // credential id not present locally; stored
 	Updated   int // same id already present; its counter was raised
 	Unchanged int // same id already present with an equal or higher counter
+	// Invalid describes each incoming record that was skipped because it
+	// could never be used to sign: no rpId, a malformed id, or a bad key.
+	Invalid []string
+}
+
+// validateImported checks that a record from outside this vault is usable.
+func validateImported(c storedCredential) error {
+	if c.RPID == "" {
+		return errors.New("empty rp_id")
+	}
+	if len(c.ID) != credentialIDLen {
+		return fmt.Errorf("credential id is %d bytes, want %d", len(c.ID), credentialIDLen)
+	}
+	if _, err := parsePrivateKey(c.PrivateKey); err != nil {
+		return fmt.Errorf("private key unusable: %v", err)
+	}
+	return nil
 }
 
 // mergeCredentials adds incoming passkeys without ever removing or replacing
@@ -371,7 +388,15 @@ func (v *vault) mergeCredentials(incoming []storedCredential, beforeWrite func()
 	work := make([]storedCredential, len(orig))
 	copy(work, orig)
 	v.contents.Credentials = work
-	for _, inc := range incoming {
+	for n, inc := range incoming {
+		if err := validateImported(inc); err != nil {
+			label := inc.RPID
+			if label == "" {
+				label = "(no site)"
+			}
+			res.Invalid = append(res.Invalid, fmt.Sprintf("record %d, %s: %v", n+1, label, err))
+			continue
+		}
 		inc = cloneCredential(inc)
 		creds := v.contents.Credentials
 

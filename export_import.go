@@ -134,8 +134,11 @@ func runImport(opts options, src string) error {
 		}
 		return err
 	}
-	logf("imported %s: %d added, %d counter(s) raised, %d unchanged",
-		src, res.Added, res.Updated, res.Unchanged)
+	for _, why := range res.Invalid {
+		logf("skipped invalid record in backup: %s", why)
+	}
+	logf("imported %s: %d added, %d counter(s) raised, %d unchanged, %d invalid skipped",
+		src, res.Added, res.Updated, res.Unchanged, len(res.Invalid))
 	return nil
 }
 
