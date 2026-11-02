@@ -217,8 +217,8 @@ func runRekey(opts options) error {
 
 	// Back up before touching anything. A failed rekey must never be the
 	// reason someone loses their passkeys.
-	backup := fmt.Sprintf("%s.bak-%s", opts.vaultPath, time.Now().Format("20060102-150405"))
-	if err := copyFile(opts.vaultPath, backup); err != nil {
+	backup, err := backupVaultFile(opts.vaultPath)
+	if err != nil {
 		return fmt.Errorf("could not back up the vault, refusing to rekey: %w", err)
 	}
 	logf("backed up the existing vault to %s", backup)
@@ -519,14 +519,6 @@ func readLine(f *os.File) ([]byte, error) {
 		}
 	}
 	return bytes.TrimRight(out, "\r"), nil
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0o600)
 }
 
 // zero overwrites secret material so it does not linger in the heap any longer

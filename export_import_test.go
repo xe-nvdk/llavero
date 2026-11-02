@@ -683,3 +683,40 @@ func TestVerifyExportComparesWholeRecords(t *testing.T) {
 		t.Error("a copy with a duplicated record in place of a missing one was accepted")
 	}
 }
+
+func TestBackupVaultFileNeverOverwrites(t *testing.T) {
+	vaultPath := filepath.Join(t.TempDir(), "vault.pkv")
+	if err := os.WriteFile(vaultPath, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := backupVaultFile(vaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vaultPath, []byte("v2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := backupVaultFile(vaultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("two backups share the name %s", first)
+	}
+	for path, want := range map[string]string{first: "v1", second: "v2"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", filepath.Base(path), got, want)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(path), fi.Mode().Perm())
+		}
+	}
+}
