@@ -1,14 +1,16 @@
 package main
 
-// Build identity. These three strings are the single source for the -version
-// flag and the startup journal line. A later CTAP 2.1 getInfo field can read
-// the same `version` rather than inventing a second constant.
+// Build identity: version, commit hash and commit date. The date is when the
+// commit was made, not when the binary was built, so rebuilding the same
+// commit prints the same line. These three strings are the single source for
+// the -version flag and the startup journal line. A later CTAP 2.1 getInfo
+// field can read the same `version` rather than inventing a second constant.
 //
 // Release builds stamp them with -ldflags:
 //
 //	-X main.version=v0.1.0
 //	-X main.commit=$(git rev-parse --short HEAD)
-//	-X main.date=$(date -u +%Y-%m-%d)
+//	-X main.commitDate=$(git log -1 --format=%cs)
 //
 // A plain `go build` or `go install` leaves the defaults. applyBuildInfo then
 // fills what it can from the metadata Go embeds, so both paths give a bug
@@ -22,9 +24,9 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	version    = "dev"
+	commit     = "none"
+	commitDate = "unknown"
 )
 
 func loadBuildInfo() {
@@ -32,15 +34,15 @@ func loadBuildInfo() {
 	if !ok {
 		return
 	}
-	version, commit, date = applyBuildInfo(version, commit, date, info)
+	version, commit, commitDate = applyBuildInfo(version, commit, commitDate, info)
 }
 
 // applyBuildInfo fills any still-default field from Go's embedded build
 // info. Values already set by -ldflags are left alone, so a release binary
 // cannot be overwritten by whatever the linker happened to embed.
-func applyBuildInfo(version, commit, date string, info *debug.BuildInfo) (string, string, string) {
+func applyBuildInfo(version, commit, commitDate string, info *debug.BuildInfo) (string, string, string) {
 	if info == nil {
-		return version, commit, date
+		return version, commit, commitDate
 	}
 
 	if isDefault(version, "dev") {
@@ -71,23 +73,23 @@ func applyBuildInfo(version, commit, date string, info *debug.BuildInfo) (string
 			commit += "-dirty"
 		}
 	}
-	if isDefault(date, "unknown") && vcsTime != "" {
-		date = formatVCSTime(vcsTime)
+	if isDefault(commitDate, "unknown") && vcsTime != "" {
+		commitDate = formatVCSTime(vcsTime)
 	}
 
 	// go install from a module proxy usually has a version (often a
-	// pseudo-version) but no vcs.* settings. Pull commit and date out of
+	// pseudo-version) but no vcs.* settings. Pull commit and commit date out of
 	// the pseudo-version so those builds are not "none" / "unknown".
 	if pseudoCommit, pseudoDate, ok := parsePseudoVersion(version); ok {
 		if isDefault(commit, "none") {
 			commit = pseudoCommit
 		}
-		if isDefault(date, "unknown") {
-			date = pseudoDate
+		if isDefault(commitDate, "unknown") {
+			commitDate = pseudoDate
 		}
 	}
 
-	return version, commit, date
+	return version, commit, commitDate
 }
 
 func isDefault(val, fallback string) bool {
@@ -110,7 +112,7 @@ func formatVCSTime(vcsTime string) string {
 
 // parsePseudoVersion recognises the go-install form
 // vX.Y.Z-yyyymmddhhmmss-<12 hex> (and the -0.yyyymmddhhmmss- variant).
-func parsePseudoVersion(v string) (commit, date string, ok bool) {
+func parsePseudoVersion(v string) (commit, commitDate string, ok bool) {
 	v = strings.TrimSuffix(v, "+incompatible")
 	revSep := strings.LastIndexByte(v, '-')
 	if revSep < 0 || len(v)-revSep-1 != 12 || !isLowerHex(v[revSep+1:]) {
@@ -154,18 +156,18 @@ func isDigits(s string) bool {
 //
 //	llavero v0.1.0 (230caa9, 2026-09-17)
 func versionLine() string {
-	return formatVersion(version, commit, date)
+	return formatVersion(version, commit, commitDate)
 }
 
-func formatVersion(version, commit, date string) string {
+func formatVersion(version, commit, commitDate string) string {
 	if version == "" {
 		version = "dev"
 	}
 	if commit == "" {
 		commit = "none"
 	}
-	if date == "" {
-		date = "unknown"
+	if commitDate == "" {
+		commitDate = "unknown"
 	}
-	return fmt.Sprintf("llavero %s (%s, %s)", version, commit, date)
+	return fmt.Sprintf("llavero %s (%s, %s)", version, commit, commitDate)
 }

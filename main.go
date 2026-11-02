@@ -62,7 +62,7 @@ func main() {
 
 	var (
 		opts        options
-		showVersion = flag.Bool("version", false, "print build information and exit")
+		showVersion = flag.Bool("version", false, "print version, commit hash and commit date, then exit")
 		tpmSelftest = flag.Bool("tpm-selftest", false, "seal and unseal a test secret, then exit")
 		verboseFlag = flag.Bool("v", false, "log every CTAPHID frame")
 	)

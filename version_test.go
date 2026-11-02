@@ -29,15 +29,15 @@ func TestApplyBuildInfoFillsDefaults(t *testing.T) {
 			{Key: "vcs.modified", Value: "false"},
 		},
 	}
-	version, commit, date := applyBuildInfo("dev", "none", "unknown", info)
+	version, commit, commitDate := applyBuildInfo("dev", "none", "unknown", info)
 	if version != "v0.2.0" {
 		t.Errorf("version = %q, want v0.2.0 from Main.Version", version)
 	}
 	if commit != "230caa9" {
 		t.Errorf("commit = %q, want the short vcs.revision", commit)
 	}
-	if date != "2026-09-17" {
-		t.Errorf("date = %q, want 2026-09-17 from vcs.time", date)
+	if commitDate != "2026-09-17" {
+		t.Errorf("commitDate = %q, want 2026-09-17 from vcs.time", commitDate)
 	}
 }
 
@@ -49,15 +49,15 @@ func TestApplyBuildInfoMarksDirtyAndIgnoresDevel(t *testing.T) {
 			{Key: "vcs.modified", Value: "true"},
 		},
 	}
-	version, commit, date := applyBuildInfo("dev", "none", "unknown", info)
+	version, commit, commitDate := applyBuildInfo("dev", "none", "unknown", info)
 	if version != "dev" {
 		t.Errorf("version = %q, want dev; (devel) is not a real version", version)
 	}
 	if commit != "abcdef1-dirty" {
 		t.Errorf("commit = %q, want abcdef1-dirty", commit)
 	}
-	if date != "unknown" {
-		t.Errorf("date = %q, want unknown when vcs.time is missing", date)
+	if commitDate != "unknown" {
+		t.Errorf("commitDate = %q, want unknown when vcs.time is missing", commitDate)
 	}
 }
 
@@ -70,9 +70,9 @@ func TestApplyBuildInfoDoesNotOverrideLdflags(t *testing.T) {
 			{Key: "vcs.modified", Value: "true"},
 		},
 	}
-	version, commit, date := applyBuildInfo("v0.1.0", "230caa9", "2026-09-17", info)
-	if version != "v0.1.0" || commit != "230caa9" || date != "2026-09-17" {
-		t.Fatalf("ldflags were overwritten: version=%q commit=%q date=%q", version, commit, date)
+	version, commit, commitDate := applyBuildInfo("v0.1.0", "230caa9", "2026-09-17", info)
+	if version != "v0.1.0" || commit != "230caa9" || commitDate != "2026-09-17" {
+		t.Fatalf("ldflags were overwritten: version=%q commit=%q commitDate=%q", version, commit, commitDate)
 	}
 }
 
@@ -80,15 +80,15 @@ func TestApplyBuildInfoReadsGoInstallPseudoVersion(t *testing.T) {
 	info := &debug.BuildInfo{
 		Main: debug.Module{Version: "v0.0.0-20260917121223-230caa9abcde"},
 	}
-	version, commit, date := applyBuildInfo("dev", "none", "unknown", info)
+	version, commit, commitDate := applyBuildInfo("dev", "none", "unknown", info)
 	if version != "v0.0.0-20260917121223-230caa9abcde" {
 		t.Errorf("version = %q, want the module pseudo-version", version)
 	}
 	if commit != "230caa9" {
 		t.Errorf("commit = %q, want the short hash from the pseudo-version", commit)
 	}
-	if date != "2026-09-17" {
-		t.Errorf("date = %q, want 2026-09-17 from the pseudo-version timestamp", date)
+	if commitDate != "2026-09-17" {
+		t.Errorf("commitDate = %q, want 2026-09-17 from the pseudo-version timestamp", commitDate)
 	}
 }
 
@@ -106,10 +106,10 @@ func TestParsePseudoVersion(t *testing.T) {
 		{"v0.1.0-rc.1", "", "", false},
 	}
 	for _, tt := range tests {
-		commit, date, ok := parsePseudoVersion(tt.in)
-		if ok != tt.ok || commit != tt.wantCommit || date != tt.wantDate {
+		commit, commitDate, ok := parsePseudoVersion(tt.in)
+		if ok != tt.ok || commit != tt.wantCommit || commitDate != tt.wantDate {
 			t.Errorf("parsePseudoVersion(%q) = (%q, %q, %v), want (%q, %q, %v)",
-				tt.in, commit, date, ok, tt.wantCommit, tt.wantDate, tt.ok)
+				tt.in, commit, commitDate, ok, tt.wantCommit, tt.wantDate, tt.ok)
 		}
 	}
 }
@@ -119,7 +119,7 @@ func TestParsePseudoVersion(t *testing.T) {
 // that never reaches main().
 func TestVersionFlagWithLdflags(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "llavero")
-	ldflags := "-X main.version=v0.1.0 -X main.commit=230caa9 -X main.date=2026-09-17"
+	ldflags := "-X main.version=v0.1.0 -X main.commit=230caa9 -X main.commitDate=2026-09-17"
 	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", bin, ".")
 	build.Env = append(os.Environ(), "GOFLAGS=")
 	out, err := build.CombinedOutput()
