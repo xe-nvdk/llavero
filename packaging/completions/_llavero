@@ -4,10 +4,11 @@
 # Install as /usr/share/zsh/site-functions/_llavero
 # This file is the completion function; do not wrap it in another.
 
-local -a modes uv consent
+local -a modes uv consent prompts
 modes=(passphrase tpm tpm+passphrase)
 uv=(fingerprint prompt)
 consent=(prompt fingerprint)
+prompts=(auto omarchy-menu-select fuzzel wofi tofi rofi zenity kdialog terminal)
 
 _arguments -S \
 	'-vault[path to the encrypted vault file]:vault file:_files' \
@@ -16,6 +17,7 @@ _arguments -S \
 	'-uv[user verification method]:method:($uv)' \
 	'-uv-strict[deny when the fingerprint sensor is unusable]' \
 	'-consent[how to take consent]:method:($consent)' \
+	'-prompt[approval prompt backend]:backend:($prompts)' \
 	'-uv-grace[reuse a fingerprint scan for the same site]:duration:(0 5s 10s)' \
 	'-mlock=-[lock memory against swap (default true)]::bool:(true false)' \
 	'-list[list stored passkeys, then exit]' \

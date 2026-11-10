@@ -11,6 +11,7 @@ _llavero() {
 	local modes="passphrase tpm tpm+passphrase"
 	local uv="fingerprint prompt"
 	local consent="prompt fingerprint"
+	local prompts="auto omarchy-menu-select fuzzel wofi tofi rofi zenity kdialog terminal"
 
 	case "$prev" in
 	-vault)
@@ -29,6 +30,10 @@ _llavero() {
 		mapfile -t COMPREPLY < <(compgen -W "$consent" -- "$cur")
 		return
 		;;
+	-prompt)
+		mapfile -t COMPREPLY < <(compgen -W "$prompts" -- "$cur")
+		return
+		;;
 	-uv-grace)
 		mapfile -t COMPREPLY < <(compgen -W "0 5s 10s" -- "$cur")
 		return
@@ -43,7 +48,7 @@ _llavero() {
 	esac
 
 	# -mlock defaults to true; the useful completion is turning it off.
-	local opts="-vault -unlock -rekey -uv -uv-strict -consent -uv-grace
+	local opts="-vault -unlock -rekey -uv -uv-strict -consent -prompt -uv-grace
 		-mlock -mlock=false -list -forget -auto-approve
 		-passphrase-fd -new-passphrase-fd -tpm-selftest -v -version -h"
 

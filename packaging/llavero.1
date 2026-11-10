@@ -70,6 +70,23 @@ User verification:
 .BR prompt
 (the desktop approval alone).
 .TP
+.BI \-prompt " BACKEND"
+How to show the approval dialog:
+.B auto
+(the default) uses the first available of
+.BR omarchy-menu-select ,
+.BR fuzzel ,
+.BR wofi ,
+.BR tofi ,
+.BR rofi ,
+.BR zenity ,
+.B kdialog
+and, when stdin and stdout are both a terminal,
+.BR terminal ,
+and logs the choice.
+Naming one forces it.
+Startup fails if none can be used.
+.TP
 .B \-uv-strict
 Deny the request when the fingerprint sensor is unusable, instead of falling
 back to the desktop approval.

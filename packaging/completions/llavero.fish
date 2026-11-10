@@ -10,6 +10,7 @@ complete -c llavero -o rekey -x -a "passphrase tpm tpm+passphrase" -d "Re-encryp
 complete -c llavero -o uv -x -a "fingerprint prompt" -d "User verification method"
 complete -c llavero -o uv-strict -d "Deny when the fingerprint sensor is unusable"
 complete -c llavero -o consent -x -a "prompt fingerprint" -d "How to take consent"
+complete -c llavero -o prompt -x -a "auto omarchy-menu-select fuzzel wofi tofi rofi zenity kdialog terminal" -d "Approval prompt backend"
 complete -c llavero -o uv-grace -x -a "0 5s 10s" -d "Reuse a fingerprint scan for the same site"
 complete -c llavero -o mlock -d "Lock memory against swap (default true)"
 complete -c llavero -o list -d "List stored passkeys, then exit"

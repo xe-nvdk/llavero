@@ -53,6 +53,7 @@ type options struct {
 	forget      string
 	mlock       bool
 	autoApprove bool
+	prompt      string
 	passFD      int
 	newPassFD   int
 }
@@ -77,6 +78,7 @@ func main() {
 	flag.BoolVar(&opts.list, "list", false, "list stored passkeys, then exit")
 	flag.StringVar(&opts.forget, "forget", "", "delete passkeys matching a site or a credential id prefix, then exit")
 	flag.BoolVar(&opts.autoApprove, "auto-approve", false, "approve every request without prompting (testing only)")
+	flag.StringVar(&opts.prompt, "prompt", "auto", "approval prompt backend: auto (detect and log), or one of "+strings.Join(promptNames(), ", "))
 	flag.IntVar(&opts.passFD, "passphrase-fd", -1, "read the vault passphrase from this file descriptor")
 	flag.IntVar(&opts.newPassFD, "new-passphrase-fd", -1, "read the NEW passphrase for -rekey from this file descriptor")
 	flag.Parse()
@@ -245,10 +247,11 @@ func run(opts options) error {
 		logf("WARNING: -auto-approve is set. Every request will be granted without asking.")
 		ap = autoApprover{}
 	} else {
-		ap, err = newMenuApprover()
+		ap, err = newApprover(opts.prompt, osPromptEnv(logf))
 		if err != nil {
 			return fmt.Errorf("no approval UI available: %w\n"+
-				"       (omarchy-menu-select is required, or run with -auto-approve for testing)", err)
+				"       (install one of %s, pick one with -prompt, or run with -auto-approve for testing)",
+				err, strings.Join(promptNames(), ", "))
 		}
 	}
 

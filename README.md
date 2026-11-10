@@ -68,6 +68,26 @@ ps -o lstart= -p "$(pgrep -u "$USER" -x systemd)"
 A start time from before your `usermod` means it is still running with the old
 groups, and so is every service it launched.
 
+### Approval prompt
+
+Every request asks first. Llavero shows that question with whichever of these
+it finds on `PATH`, tried in this order, and logs the one it picked at startup:
+
+| Backend | Command |
+|---|---|
+| `omarchy-menu-select` | Omarchy's native picker |
+| `fuzzel` | `fuzzel --dmenu` |
+| `wofi` | `wofi --dmenu` |
+| `tofi` | `tofi` (reads rows on stdin) |
+| `rofi` | `rofi -dmenu` |
+| `zenity` | `zenity --question` / `--list` (GTK) |
+| `kdialog` | `kdialog --yesno` / `--menu` (KDE) |
+| `terminal` | asks on stdin, only when stdin and stdout are both a TTY |
+
+Install any one of them, or force one with `-prompt zenity`. The daemon
+refuses to start when none is usable, or when there is no `WAYLAND_DISPLAY` or
+`DISPLAY` for a graphical one, rather than denying every request silently.
+
 Then install the binary where the user unit looks for it
 (`~/.local/bin/llavero`):
 
@@ -177,6 +197,7 @@ llavero -vault /tmp/portable.pkv -list
 | `-passphrase-fd N` | read the passphrase from a descriptor (`0` for stdin) |
 | `-mlock` | lock memory against swap (default true, degrades with a warning) |
 | `-tpm-selftest` | seal and unseal a test secret, then exit |
+| `-prompt BACKEND` | approval dialog: `auto` (default) or force one, see [Approval prompt](#approval-prompt) |
 | `-auto-approve` | approve everything without prompting. Testing only |
 | `-v` | log every CTAPHID frame |
 
